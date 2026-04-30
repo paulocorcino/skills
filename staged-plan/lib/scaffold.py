@@ -27,8 +27,11 @@ Safety:
 from __future__ import annotations
 
 import argparse
+import os
 import sys
+import tempfile
 from datetime import date
+from pathlib import Path
 
 
 EXECUTION_MODEL = """## Execution model (READ FIRST)
@@ -61,7 +64,43 @@ exist in `git log`, not that they came from subagents. If Stage K was fixed
 manually, relaunch Stage K+1 unchanged. Never re-run committed stages.
 """
 
-EXECUTOR_ADAPTER = """## Executor adapter
+PLAN_LANDING_COMMIT = """## Plan landing commit (mandatory before Phase 2)
+Before launching Stage 1, the planner (NOT a subagent) makes a single commit
+that lands this plan and its support artifacts. This is plan setup, not
+feature work — isolating it here keeps Stage 0 and Stage 1+ scope-clean.
+
+**Pre-check (mandatory):** before staging anything, inspect `<repo>/.gitignore`.
+The Plan landing commit assumes `docs/plans/` is **trackable**. Two cases:
+
+- If `.gitignore` ignores `docs/plans/` wholesale (e.g. a `docs/plans/` line),
+  **narrow the rule to ignore only logs**: replace that line with
+  `docs/plans/logs/`. The plan file, `_verify.py`, and verify scripts MUST be
+  versioned; only gate logs are excluded. Do NOT use `git add -f` to bypass —
+  the rule itself needs fixing.
+- If `.gitignore` does not ignore `docs/plans/`, just append `docs/plans/logs/`
+  if not already present.
+
+The landing commit MUST contain:
+1. `<repo>/docs/plans/{slug}.md` — this plan file.
+2. `<repo>/docs/plans/_verify.py` — copied from
+   `~/.claude/skills/staged-plan/lib/verify.py` if not already present.
+3. Any `<repo>/docs/plans/{slug}-verify-stage-N.py` and
+   `<repo>/docs/plans/{slug}-verify-e2e.py` scripts the plan declares.
+4. `<repo>/.gitignore` with the narrowed/added rule from the pre-check above.
+
+Suggested subject:
+`chore(plans): land {slug} staged plan + verify scripts`
+
+After this commit, working tree is clean and Phase 2 starts.
+
+## Logs policy
+Gate execution logs are written to `<repo>/docs/plans/logs/<prefix>-<ts>.log`
+on every `run_gate()` call. They are **local evidence artifacts, not
+versioned**: `docs/plans/logs/` is gitignored via the Plan landing commit.
+Reports (committed alongside each stage) capture the deviations and
+judgments needed for PR review; raw logs are kept locally for forensics.
+
+## Executor adapter
 - **Claude Code**: use the `Agent` tool, one stage per subagent,
   `subagent_type: general-purpose`, foreground, omit `model`, omit `run_in_background`.
 - **Codex / other executors**: execute each Hand-off prompt inline in a fresh context
@@ -73,24 +112,42 @@ GLOBAL_CONVENTIONS = """## Global conventions
 - Build gate: <FILL: cmd>
 - Lint/test gates: <FILL: cmds>
 - Invariants: <FILL: e.g. no GPL in main binary, vendor-neutral i18n, English only>
-- Commit style: one per stage; trailer `Co-Authored-By: <model> <noreply@anthropic.com>`
-- Staging: only files the stage declares, by explicit path; never `git add -A`
+- Commit style: ONE commit per stage that includes BOTH the code changes AND
+  the post-stage report file. The report is staged alongside code; there is
+  no separate "report commit". Trailer:
+  `Co-Authored-By: $EXECUTOR_NAME $EXECUTOR_EMAIL`
+  (substituted by the executor at commit time, e.g.
+  `Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>`).
+- Report content: do NOT include the stage's own commit SHA in the report
+  body (impossible: the file is part of the commit). The parent emits the
+  canonical stage->SHA mapping in the End-to-end summary table.
+- Staging: only files the stage declares PLUS the stage's own
+  `<plan-slug>-stage-{N}-report.md`, by explicit path; never `git add -A`.
 """
 
-STAGE_0 = """## Stage 0 - Pre-flight (mandatory, no feature work, no commit)
-Purpose: record baseline state, vendor verify primitives, apply the
-working-tree policy so later failures cannot be blamed on prior repo state.
-1. Capture `git status` and the current HEAD SHA in the post-stage report.
-2. **Vendor verify primitives** (only if any stage uses verify scripts):
-   if `<repo>/docs/plans/_verify.py` does not exist, copy it from
-   `~/.claude/skills/staged-plan/lib/verify.py`.
-3. Apply the working-tree policy from `## Execution policy`:
+STAGE_0 = """## Stage 0 - Pre-flight (mandatory, no feature work, no commit, no versioned report)
+Purpose: record baseline state and apply the working-tree policy so later
+failures cannot be blamed on prior repo state. Plan support artifacts
+(`_verify.py`, verify scripts, the plan file) are already committed via the
+Plan landing commit before Phase 2 began.
+
+**No versioned report:** Stage 0 must NOT write `{slug}-stage-0-report.md`
+under `docs/plans/` — that would leave the working tree dirty and conflict
+with `clean-required`. Baseline evidence goes to the gitignored logs dir;
+the human-readable summary is returned to the parent.
+
+1. Capture `git status` and the current HEAD SHA. Write them to
+   `<repo>/docs/plans/logs/{slug}-stage-0-baseline.log` (gitignored) and
+   return the same summary to the parent.
+2. Apply the working-tree policy from `## Execution policy`:
    - clean-required: tree must be clean; if not, abort.
-   - stash-authorized: `git stash push -u -m "staged-plan-{slug}-pre"`; record stash ref.
-   - integrate-existing: leave changes in place; declare them in the report.
+   - stash-authorized: `git stash push -u -m "staged-plan-{slug}-pre"`; record stash ref in the log + parent summary.
+   - integrate-existing: leave changes in place; list them in the log + parent summary.
    - abort-until-clean: abort the plan; user resolves manually.
-4. Run every gate (build, lint, tests, etc.) on the resulting baseline.
-5. Red -> abort. Green -> proceed to Stage 1.
+3. Run every gate (build, lint, tests, etc.) on the resulting baseline.
+   `run_gate()` already writes its own per-command log under `docs/plans/logs/`.
+4. Red -> abort. Green -> working tree must still be clean (or match the
+   integrate-existing manifest); proceed to Stage 1.
 """
 
 REVIEWER_GATE = """## Reviewer gate (only if Reviewer != none)
@@ -138,17 +195,23 @@ _HANDOFF_BODY = """
 > - Other gates: <FILL: list>
 > - Invariants: <FILL: list>
 >
-> Working tree: per `## Execution policy` working-tree policy.
-> Stage only files YOU modify, by explicit path; never `git add -A`.
+> Working tree: per `## Execution policy` working-tree policy = `<FILL: policy>`.
+> - clean-required / stash-authorized: tree is clean at stage start; stage only
+>   files YOU modify, by explicit path; never `git add -A`.
+> - integrate-existing: pre-existing dirty files listed in the Stage 0 baseline
+>   summary MAY be part of your declared file list; if so, stage them; otherwise
+>   leave them untouched.
 >
 > Files to modify:
 > 1. `<FILL: path>` - <FILL: intent>
 >
 > Order of operations:
 > 1. <FILL>
-> N. Gates pass -> write the post-stage report -> stage code files AND the
->    report file together -> commit with HEREDOC + Co-Authored-By.
->    (One commit per stage; report is committed alongside the code.)
+> N. Gates pass -> write the post-stage report (no SHA in body — impossible)
+>    -> stage code files AND the report file together by explicit path
+>    -> commit with HEREDOC including the
+>    `Co-Authored-By: $EXECUTOR_NAME $EXECUTOR_EMAIL` trailer.
+>    (One commit per stage; report is part of that commit.)
 >
 > Authorization:
 > - MAY commit directly after all verifications pass.
@@ -191,7 +254,9 @@ touching files outside it, STOP and report instead of silently expanding.
 
 **Order of operations:**
 1. <FILL>
-N. Gates pass -> commit.
+N. Gates pass -> write the post-stage report -> stage code files AND the
+   report file together -> commit. (One commit per stage; report is committed
+   alongside the code.)
 
 **Verification:** <FILL: per-stage commands + expected outcomes>
 <If gates >3 cmds OR grep of invariants OR reuses primitives, generate
@@ -200,7 +265,10 @@ N. Gates pass -> commit.
 **Manual verification (if any):** <FILL or "none">
 
 **Post-stage report:** write `<repo>/docs/plans/{slug}-stage-{n}-report.md`
-with: files changed, gate results, commit SHA, deviations, surprises.
+with: files changed, gate results, deviations, surprises.
+**Do NOT include the stage's own commit SHA in the report body** — the file
+is part of that commit, so the SHA is unknowable at write time. The parent
+emits the canonical `stage->SHA` mapping in the End-to-end summary table.
 
 {_handoff_header(n)}{_HANDOFF_BODY.format(n=n)}
 ---
@@ -226,13 +294,13 @@ def scaffold(args: argparse.Namespace) -> str:
     parts.append(f"<!-- scaffolded {date.today().isoformat()} via staged-plan/lib/scaffold.py -->\n")
     parts.append(EXECUTION_MODEL)
     parts.append(render_execution_policy(args.mode, args.working_tree, args.reviewer, args.reviewer_reason))
-    parts.append(EXECUTOR_ADAPTER)
+    parts.append(PLAN_LANDING_COMMIT.replace("{slug}", args.slug))
     parts.append("## Context\n<FILL: why this track. Constraints. In scope. Out of scope / blocked externally.>\n")
 
     parts.append("## Alternatives considered\n<FILL-OR-DELETE: 1-2 stage decompositions rejected, with reason. Delete this block if you only considered one decomposition.>\n")
     parts.append("## Open questions\n<FILL-OR-DELETE: items the planner could not resolve from the codebase alone. Each: question, default assumed, stage(s) affected. Delete this block if there are none.>\n")
 
-    parts.append(GLOBAL_CONVENTIONS)
+    parts.append(GLOBAL_CONVENTIONS.replace("<plan-slug>", args.slug))
     parts.append(STAGE_0.replace("{slug}", args.slug))
 
     for i, title in enumerate(args.stage, start=1):
@@ -271,7 +339,14 @@ def main() -> int:
         print("error: at least one --stage required", file=sys.stderr)
         return 2
 
-    from pathlib import Path
+    if args.reviewer != "none" and not args.reviewer_reason.strip():
+        print(
+            f"error: --reviewer={args.reviewer} requires --reviewer-reason "
+            f"so the recommendation is auditable.",
+            file=sys.stderr,
+        )
+        return 2
+
     out = Path(args.output)
     if out.exists() and not args.force:
         print(
@@ -282,7 +357,22 @@ def main() -> int:
         return 3
 
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(scaffold(args))
+    # Atomic write: stage in a sibling temp file, then os.replace into place.
+    # Prevents partial files on interruption and matches POSIX atomic-rename
+    # semantics (also works on Windows since Python 3.3).
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=out.name + ".", suffix=".tmp", dir=str(out.parent)
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(scaffold(args))
+        os.replace(tmp_name, out)
+    except Exception:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
     print(f"Plan scaffolded: {out.resolve()}")
     return 0
 

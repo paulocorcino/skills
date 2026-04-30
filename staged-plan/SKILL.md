@@ -44,14 +44,14 @@ Enter plan mode first (`EnterPlanMode`) if not already active.
 
 These defaults must be recorded verbatim under `## Execution policy` in every plan. Only deviate from them if the user explicitly overrides in the current conversation.
 
-**The one allowed question:** when `git status` is **not clean** at plan time, the working-tree policy cannot be defaulted safely. Briefly summarize the dirty state and ask Paulo to choose between `stash-authorized`, `integrate-existing`, or `abort-until-clean` (see Working-tree policy below). Single question, not a menu of unrelated decisions.
+**The one allowed question:** when `git status` is **not clean** at plan time, the working-tree policy cannot be defaulted safely. Briefly summarize the dirty state and ask the user to choose between `stash-authorized`, `integrate-existing`, or `abort-until-clean` (see Working-tree policy below). Single question, not a menu of unrelated decisions.
 
 **Auto-recommend reviewer gate** (write the recommendation directly into the plan; user can edit before `ExitPlanMode`):
 - `reviewer: deep` recommended when ≥2 of: ≥5 stages, public/cross-repo contract change, Docker/CI changes, auth or data migration, multi-repo touch.
 - `reviewer: light` recommended when exactly 1 of those signals is present.
 - `reviewer: none` otherwise (default).
 
-State the recommendation **with the reason** so Paulo can override in one edit:
+State the recommendation **with the reason** so the user can override in one edit:
 ```
 Reviewer: deep — recommended by: 7 stages + public contract + multi-repo. Override with `Reviewer: none` to skip.
 ```
@@ -161,26 +161,34 @@ determined. Discoveries during execution are handled by existing gate mechanisms
 - Build gate: <cmd>
 - Lint/test gates: <cmds>
 - Invariants: <e.g. no GPL in main binary, vendor-neutral i18n, tracing only, English only>
-- Commit style: **one commit per stage** that includes BOTH the code changes AND the post-stage report. The report (`<plan-slug>-stage-{N}-report.md`) is staged alongside the code files in the same commit — there is no separate "report commit". Trailer `Co-Authored-By: <model> <noreply@anthropic.com>`
+- Commit style: **one commit per stage** that includes BOTH the code changes AND the post-stage report. The report (`<plan-slug>-stage-{N}-report.md`) is staged alongside the code files in the same commit — there is no separate "report commit". Trailer: `Co-Authored-By: $EXECUTOR_NAME $EXECUTOR_EMAIL` (substituted by the executor at commit time, e.g. `Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>`).
 - Staging: only files the stage declares, plus the stage's own report file, by explicit path; never `git add -A`
 
-## Stage 0 - Pre-flight (mandatory, no feature work, no commit)
-Purpose: record baseline state, vendor verify primitives, apply the
-working-tree policy so later failures cannot be blamed on prior repo state.
-1. Capture `git status` and the current HEAD SHA in the post-stage report.
-2. **Vendor verify primitives** (only if any stage uses verify scripts):
-   if `<repo>/docs/plans/_verify.py` does not exist, copy it from
-   `~/.claude/skills/staged-plan/lib/verify.py`. Commit it as part of Stage 0
-   ONLY if the working-tree policy allows; otherwise leave untracked and let
-   the first feature stage stage it alongside its own changes.
-3. Apply the working-tree policy from `## Execution policy`:
+## Stage 0 - Pre-flight (mandatory, no feature work, no commit, no versioned report)
+Purpose: record baseline state and apply the working-tree policy so later
+failures cannot be blamed on prior repo state. **Plan support artifacts
+(`_verify.py`, verify scripts, the plan file itself) are already committed
+via the Plan landing commit before Phase 2 began** — they are not vendored
+or committed here.
+
+**No versioned report:** Stage 0 must NOT write `<plan-slug>-stage-0-report.md`
+under `docs/plans/`. That would leave the working tree dirty and conflict with
+`clean-required`. Baseline evidence goes to the gitignored logs dir, and the
+human-readable summary is returned to the parent (which surfaces it inline).
+
+1. Capture `git status` and the current HEAD SHA. Write them to
+   `<repo>/docs/plans/logs/<plan-slug>-stage-0-baseline.log` (gitignored via
+   the Plan landing commit) and return the same summary to the parent.
+2. Apply the working-tree policy from `## Execution policy`:
    - clean-required: tree must be clean; if not, abort.
-   - stash-authorized: `git stash push -u -m "staged-plan-<slug>-pre"`; record stash ref.
-   - integrate-existing: leave changes in place; declare them in the report; subagents
+   - stash-authorized: `git stash push -u -m "staged-plan-<slug>-pre"`; record stash ref in the log + parent summary.
+   - integrate-existing: leave changes in place; list them in the log + parent summary; subagents
      must not stage files they did not modify.
    - abort-until-clean: abort the plan; user resolves manually.
-4. Run every gate (build, lint, tests, i18n, etc.) on the resulting baseline.
-5. Red -> abort. Green -> proceed to Stage 1.
+3. Run every gate (build, lint, tests, i18n, etc.) on the resulting baseline. `run_gate()`
+   already writes its own per-command log under `docs/plans/logs/`.
+4. Red -> abort. Green -> working tree must still be clean (or match the
+   integrate-existing manifest); proceed to Stage 1.
 
 ## Stage 1 - <title>
 **Items:** <atomic IDs>
@@ -199,13 +207,16 @@ touching files outside it, STOP and report instead of silently expanding.
 <If gates are >3 commands OR require grep of invariants OR reuse verify
 primitives, generate `docs/plans/<plan-slug>-verify-stage-1.py` (Python 3
 stdlib only, cross-platform) and call it here. The script imports primitives
-from `<repo>/docs/plans/_verify.py` (vendored in Stage 0). Otherwise inline.>
+from `<repo>/docs/plans/_verify.py` (vendored via the Plan landing commit). Otherwise inline.>
 
 **Manual verification (if any):** <user-side, deferred if agent can't execute>
 
 **Post-stage report:** write `<repo>/docs/plans/<plan-slug>-stage-1-report.md`
-with: files changed, gate results, commit SHA, deviations, surprises.
-Do NOT write to `<repo>/.claude/plans/` - that path is deprecated.
+with: files changed, gate results, deviations, surprises. **Do NOT include
+the stage commit SHA in the report body** — the report is committed inside
+that same commit, so the SHA is unknowable at write time. The parent emits
+the canonical `stage -> SHA` mapping in the End-to-end summary table.
+Do NOT write to `<repo>/.claude/plans/` — that path is deprecated.
 
 **Hand-off prompt for Stage 1:**
 > <SELF-CONTAINED prompt - see template below>
@@ -264,7 +275,9 @@ Otherwise keep gates inline in the markdown — script overhead is not justified
 
 **Why Python, not bash:** scripts must run unchanged on Linux, macOS, and Windows native (no WSL/Git-Bash dependency). Python 3 stdlib is the cross-platform denominator and is available on every dev box.
 
-**Vendoring:** the primitives live at `~/.claude/skills/staged-plan/lib/verify.py` (the canonical copy) and are vendored into each repo at `<repo>/docs/plans/_verify.py` during Stage 0. Generated stage scripts import from the vendored copy, so any executor (Claude, Codex, human dev) can run `python docs/plans/<slug>-verify-stage-N.py` without the skill being installed.
+**Vendoring:** the primitives live at `~/.claude/skills/staged-plan/lib/verify.py` (the canonical copy) and are vendored into each repo at `<repo>/docs/plans/_verify.py` as part of the **Plan landing commit** (Phase 1.5), before Phase 2 begins. Generated stage scripts import from the vendored copy, so any executor (Claude, Codex, human dev) can run `python docs/plans/<slug>-verify-stage-N.py` without the skill being installed.
+
+**Logs policy:** `run_gate()` always writes a timestamped log to `<repo>/docs/plans/logs/<prefix>-<ts>.log`. These are local evidence artifacts, **not versioned**: the Plan landing commit adds `docs/plans/logs/` to `.gitignore`. Reports (committed alongside each stage) capture deviations and judgments for PR review; raw logs are forensic-only and may grow large.
 
 **Generated script shape:**
 ```python
@@ -323,7 +336,11 @@ Files to modify:
 
 Order of operations:
 1. ...
-{last}. Gates pass -> stage files -> commit with HEREDOC + Co-Authored-By.
+{last}. Gates pass -> write the post-stage report (no SHA in body — impossible)
+       -> stage code files AND the report file together by explicit path
+       -> commit with HEREDOC including the
+       `Co-Authored-By: $EXECUTOR_NAME $EXECUTOR_EMAIL` trailer.
+       (One commit per stage; report is part of that commit.)
 
 Authorization:
 - MAY commit directly after all verifications pass.
@@ -353,7 +370,27 @@ Return to parent:
 Begin now.
 ```
 
-### Phase 2 - Execution (after ExitPlanMode)
+### Phase 1.5 - Plan landing commit (mandatory, before Phase 2)
+
+After `ExitPlanMode`, the **planner** (not a subagent) makes a single commit that lands the plan and its support artifacts. This is NOT feature work — it is plan setup, and isolating it here keeps Stage 0 and Stage 1+ scope-clean.
+
+**Pre-check (mandatory) — `.gitignore` audit:** the landing commit assumes `<repo>/docs/plans/` is **trackable**. Inspect `.gitignore`:
+- If it ignores `docs/plans/` wholesale (a `docs/plans/` line), **narrow the rule** to `docs/plans/logs/`. The plan file, `_verify.py`, and verify scripts MUST be versioned; only gate logs are excluded. Do NOT use `git add -f` to bypass — fix the rule.
+- Otherwise, append `docs/plans/logs/` if not already present.
+
+The landing commit contains:
+1. `<repo>/docs/plans/<plan-slug>.md` — the filled plan file.
+2. `<repo>/docs/plans/_verify.py` — vendored from `~/.claude/skills/staged-plan/lib/verify.py` if not already present.
+3. Any `<repo>/docs/plans/<plan-slug>-verify-stage-N.py` and `<plan-slug>-verify-e2e.py` scripts the plan declares.
+4. `<repo>/.gitignore` with the narrowed/appended rule from the pre-check.
+
+Stage commits and post-stage reports come AFTER this commit; subagents don't touch these files.
+
+Suggested subject: `chore(plans): land <plan-slug> staged plan + verify scripts`.
+
+After the landing commit, working tree is clean and Phase 2 starts.
+
+### Phase 2 - Execution (after Plan landing commit)
 
 The Execution policy in the plan declares Mode, retry, working tree, and reviewer; the parent reads them and proceeds without further prompting (except for the semi-autonomous between-stage checkpoint).
 
@@ -465,8 +502,9 @@ Migrate module Y from lib A to lib B. 7 files, 3 public callsites.
 - Staging: explicit paths only.
 
 ## Stage 0 - Pre-flight
-Record HEAD + git status. Vendor `_verify.py` from skill lib if absent.
-Apply clean-required policy. Run build + tests on HEAD; abort if red.
+Record HEAD + git status. Apply clean-required policy. Run build + tests on
+HEAD; abort if red. (`_verify.py` was vendored via the Plan landing commit
+before this stage.)
 
 ## Stage 1 - Add B-backed implementation alongside A
 **Files:** `src/y_v2.ext` (new)
