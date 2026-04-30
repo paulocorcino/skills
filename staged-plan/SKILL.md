@@ -67,20 +67,26 @@ python3 ~/.claude/skills/staged-plan/lib/scaffold.py \
   --stage "<Stage 1 title>" \
   --stage "<Stage 2 title>" \
   ... \
+  --output <repo>/docs/plans/<plan-slug>.md \
   --mode autonomous \
   --working-tree clean-required \
-  --reviewer none \
-  --include alternatives,open-questions \
-  > <repo>/docs/plans/<plan-slug>.md
+  --reviewer none
 ```
+
+**Safety:** `--output` is required. The script refuses to overwrite an existing file (exit 3) unless `--force` is passed — this protects filled plans from being silently destroyed by an accidental rescaffold. If you genuinely want to start over, delete the file first or pass `--force` explicitly.
 
 Flags:
 - `--mode`: `autonomous` (default) or `semi-autonomous`.
 - `--working-tree`: `clean-required` (default) | `stash-authorized` | `integrate-existing` | `abort-until-clean`. Match what you decided in the working-tree assessment.
 - `--reviewer`: `none` (default) | `light` | `deep`. If non-`none`, also pass `--reviewer-reason "<short reason>"` so the recommendation is auditable.
-- `--include`: comma-separated optional sections — `alternatives` (≥5 stages or multi-repo), `open-questions` (when planner has unresolved items).
+After scaffolding, **edit** the file with the Edit tool. Two rules:
 
-After scaffolding, **edit** the file with the Edit tool to fill every `<FILL: ...>` placeholder with the stage-specific content. The scaffold is a starting point — modify freely. Do NOT re-run scaffold after editing; it will overwrite your work.
+1. Every `<FILL: ...>` placeholder must be replaced with real content before `ExitPlanMode`. No `<FILL>` survives in the final plan.
+2. `<FILL-OR-DELETE: ...>` blocks — fill them if you have content; delete the entire block if you don't. The planner decides, not the user:
+   - `## Alternatives considered`: fill if you genuinely considered >1 stage decomposition; delete if there was only one obvious cut.
+   - `## Open questions`: fill if there are items you could not resolve from the codebase; delete if the plan is fully determined. Runtime surprises (discovered during stage execution) are already handled by the "STOP and report" mechanism in each hand-off and by the reviewer gate — no need to pre-invent them here.
+
+The scaffold is a starting point — modify freely. Do NOT re-run scaffold after editing; it will overwrite your work.
 
 **At the end of Phase 1, always print** (so the IDE renders a clickable link):
 ```
@@ -140,23 +146,23 @@ manually, relaunch Stage K+1 unchanged. Never re-run committed stages.
 ## Context
 <Why this track. Constraints. Items in scope. Items out of scope / blocked externally.>
 
-## Alternatives considered (optional - recommended for >=5 stages or multi-repo)
-<1-2 stage decompositions that were rejected, with the reason. Helps the
-reviewer (and future-you) understand why this shape over others.>
+## Alternatives considered
+<FILL-OR-DELETE: 1-2 stage decompositions rejected, with reason. Planner fills
+if they considered multiple decompositions; deletes this block otherwise.
+Runtime surprises are covered by hand-off "STOP and report" + reviewer gate —
+do not pre-invent them here.>
 
-## Open questions (optional)
-<Items the planner could not resolve from the codebase alone. Each item:
-- Question.
-- Default assumed (so execution can proceed if unanswered).
-- Stage(s) affected.
-If the user does not respond before `ExitPlanMode`, the defaults stand.>
+## Open questions
+<FILL-OR-DELETE: items the planner could not resolve from the codebase alone.
+Each: question / default assumed / stage(s) affected. Delete if plan is fully
+determined. Discoveries during execution are handled by existing gate mechanisms.>
 
 ## Global conventions
 - Build gate: <cmd>
 - Lint/test gates: <cmds>
 - Invariants: <e.g. no GPL in main binary, vendor-neutral i18n, tracing only, English only>
-- Commit style: one per stage; trailer `Co-Authored-By: <model> <noreply@anthropic.com>`
-- Staging: only files the stage declares, by explicit path; never `git add -A`
+- Commit style: **one commit per stage** that includes BOTH the code changes AND the post-stage report. The report (`<plan-slug>-stage-{N}-report.md`) is staged alongside the code files in the same commit — there is no separate "report commit". Trailer `Co-Authored-By: <model> <noreply@anthropic.com>`
+- Staging: only files the stage declares, plus the stage's own report file, by explicit path; never `git add -A`
 
 ## Stage 0 - Pre-flight (mandatory, no feature work, no commit)
 Purpose: record baseline state, vendor verify primitives, apply the
@@ -350,6 +356,20 @@ Begin now.
 ### Phase 2 - Execution (after ExitPlanMode)
 
 The Execution policy in the plan declares Mode, retry, working tree, and reviewer; the parent reads them and proceeds without further prompting (except for the semi-autonomous between-stage checkpoint).
+
+0. **Pre-execution gate (mandatory, before launching Stage 1):** the parent runs `assert_no_placeholders` against the plan file to refuse to execute a half-filled plan. This catches the failure mode where the planner forgot to replace a `<FILL: ...>` block, which would cause subagents to follow boilerplate instead of real instructions.
+
+   ```bash
+   python3 -c "
+   import sys
+   sys.path.insert(0, 'docs/plans')
+   from _verify import V
+   V.assert_no_placeholders('docs/plans/<plan-slug>.md')
+   sys.exit(V.summarize())
+   "
+   ```
+
+   If this exits non-zero, **abort and surface the offending lines** to the user — do NOT launch any stage. The fix is to fill or delete the flagged blocks, not to bypass the gate.
 
 1. **Launch each stage** per `## Executor adapter` in the plan:
    - Claude Code: `Agent` tool, `subagent_type: general-purpose`, `model` omitted, `run_in_background` omitted, `description` = stage title, `prompt` = the Hand-off prompt (optionally appended with runtime context such as current branch state).

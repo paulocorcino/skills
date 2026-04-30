@@ -4,18 +4,24 @@
 Usage:
     python scaffold.py --slug <slug> --title "<plan title>" \
         --stage "Stage 1 title" --stage "Stage 2 title" ... \
+        --output docs/plans/<slug>.md \
         [--mode autonomous|semi-autonomous] \
         [--working-tree clean-required|stash-authorized|integrate-existing|abort-until-clean] \
         [--reviewer none|light|deep] \
         [--reviewer-reason "<why this level>"] \
-        [--include alternatives,open-questions] \
-        > docs/plans/<slug>.md
+        [--force]
 
 The planner runs this BEFORE filling in stage-specific content. Output contains
 all repeated boilerplate (Execution model, Execution policy, Executor adapter,
 Reviewer gate, Stage 0, hand-off template, End-to-end verification) so the
 planner only edits the cognitive parts: per-stage scope, files, order of
 operations, and hand-off prompts.
+
+Safety:
+- --output is required (no stdout redirect, which can truncate an existing
+  file before Python decides whether to error).
+- If --output already exists, the script aborts with exit 3 unless --force is
+  passed. This protects filled plans from being silently overwritten.
 """
 
 from __future__ import annotations
@@ -100,7 +106,7 @@ If a `reviewer` skill is available in the executor, prefer it; otherwise use
 an inline QA prompt that takes the plan + diff range as input.
 """
 
-HANDOFF_TEMPLATE = """**Hand-off prompt for Stage {n}:**
+_HANDOFF_HEADER = """**Hand-off prompt for Stage {n}:**
 > You are executing Stage {n} of <FILL: plan title> at <FILL: absolute plan path>.
 > Read that plan file first, then read <repo>/CLAUDE.md for repo-wide rules.
 >
@@ -108,10 +114,23 @@ HANDOFF_TEMPLATE = """**Hand-off prompt for Stage {n}:**
 > Branch: <FILL: branch>
 > Platform: <FILL: os>  (Windows: use bash syntax, forward slashes)
 >
-> Status: Stages 1..{prev} committed (confirm with `git log --oneline -{prev}`).
->
+{prior_status}>
 > Line-number hints in the plan may be stale after prior stages; grep for symbols.
->
+>"""
+
+_PRIOR_STATUS_FIRST = "> Status: this is the first feature stage; no prior stage commits exist beyond Stage 0 baseline.\n"
+_PRIOR_STATUS_LATER = "> Status: Stages 1..{prev} committed (confirm with `git log --oneline -{prev}`).\n"
+
+
+def _handoff_header(n: int) -> str:
+    if n <= 1:
+        prior = _PRIOR_STATUS_FIRST
+    else:
+        prior = _PRIOR_STATUS_LATER.format(prev=n - 1)
+    return _HANDOFF_HEADER.format(n=n, prior_status=prior)
+
+
+_HANDOFF_BODY = """
 > Your scope: Stage {n} only - <FILL: title>. Items: <FILL: IDs>.
 >
 > Critical rules (from CLAUDE.md):
@@ -127,7 +146,9 @@ HANDOFF_TEMPLATE = """**Hand-off prompt for Stage {n}:**
 >
 > Order of operations:
 > 1. <FILL>
-> N. Gates pass -> stage files -> commit with HEREDOC + Co-Authored-By.
+> N. Gates pass -> write the post-stage report -> stage code files AND the
+>    report file together -> commit with HEREDOC + Co-Authored-By.
+>    (One commit per stage; report is committed alongside the code.)
 >
 > Authorization:
 > - MAY commit directly after all verifications pass.
@@ -181,7 +202,7 @@ N. Gates pass -> commit.
 **Post-stage report:** write `<repo>/docs/plans/{slug}-stage-{n}-report.md`
 with: files changed, gate results, commit SHA, deviations, surprises.
 
-{HANDOFF_TEMPLATE.format(n=n, prev=n - 1)}
+{_handoff_header(n)}{_HANDOFF_BODY.format(n=n)}
 ---
 """
 
@@ -208,11 +229,8 @@ def scaffold(args: argparse.Namespace) -> str:
     parts.append(EXECUTOR_ADAPTER)
     parts.append("## Context\n<FILL: why this track. Constraints. In scope. Out of scope / blocked externally.>\n")
 
-    includes = set(s.strip() for s in args.include.split(",") if s.strip())
-    if "alternatives" in includes:
-        parts.append("## Alternatives considered\n<FILL: 1-2 stage decompositions rejected, with reason.>\n")
-    if "open-questions" in includes:
-        parts.append("## Open questions\n<FILL: items the planner could not resolve. Each: question, default assumed, stage(s) affected.>\n")
+    parts.append("## Alternatives considered\n<FILL-OR-DELETE: 1-2 stage decompositions rejected, with reason. Delete this block if you only considered one decomposition.>\n")
+    parts.append("## Open questions\n<FILL-OR-DELETE: items the planner could not resolve from the codebase alone. Each: question, default assumed, stage(s) affected. Delete this block if there are none.>\n")
 
     parts.append(GLOBAL_CONVENTIONS)
     parts.append(STAGE_0.replace("{slug}", args.slug))
@@ -237,6 +255,7 @@ def main() -> int:
     p.add_argument("--slug", required=True, help="plan slug (e.g. migration-x)")
     p.add_argument("--title", required=True, help="plan title (e.g. 'Migrate module Y from A to B')")
     p.add_argument("--stage", action="append", required=True, help="stage title (repeat for each stage)")
+    p.add_argument("--output", required=True, help="output path (e.g. docs/plans/migration-x.md). Aborts if file exists unless --force.")
     p.add_argument("--mode", default="autonomous", choices=["autonomous", "semi-autonomous"])
     p.add_argument(
         "--working-tree",
@@ -245,18 +264,26 @@ def main() -> int:
     )
     p.add_argument("--reviewer", default="none", choices=["none", "light", "deep"])
     p.add_argument("--reviewer-reason", default="", help="why this reviewer level was chosen")
-    p.add_argument(
-        "--include",
-        default="",
-        help="optional sections, comma-separated: alternatives,open-questions",
-    )
+    p.add_argument("--force", action="store_true", help="overwrite --output if it exists (DESTRUCTIVE)")
     args = p.parse_args()
 
     if len(args.stage) < 1:
         print("error: at least one --stage required", file=sys.stderr)
         return 2
 
-    sys.stdout.write(scaffold(args))
+    from pathlib import Path
+    out = Path(args.output)
+    if out.exists() and not args.force:
+        print(
+            f"error: {out} already exists. Refusing to overwrite. "
+            f"Pass --force to overwrite (this destroys the existing plan).",
+            file=sys.stderr,
+        )
+        return 3
+
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(scaffold(args))
+    print(f"Plan scaffolded: {out.resolve()}")
     return 0
 
 
