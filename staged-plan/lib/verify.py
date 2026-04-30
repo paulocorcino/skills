@@ -30,11 +30,13 @@ Design principles (review-driven):
 
 from __future__ import annotations
 
+import inspect
 import os
 import re
 import subprocess
 import sys
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 
 
@@ -87,6 +89,51 @@ class _Verifier:
 
     # ------------------------------------------------------------------ gates
 
+    _CALLER_RX = re.compile(r"^(?P<slug>.+?)-verify-stage-(?P<stage>\d+)\.py$")
+    _CALLER_E2E_RX = re.compile(r"^(?P<slug>.+?)-verify-e2e\.py$")
+
+    def _derive_log_prefix(
+        self, cmd: str, slug: str | None, stage: int | None, gate: str | None
+    ) -> tuple[str, str]:
+        """Return (prefix, gate_label) for the log filename.
+
+        Auto-derives slug+stage from the calling script's filename when caller
+        is `<slug>-verify-stage-<N>.py` or `<slug>-verify-e2e.py`. Falls back
+        to a generic prefix when nothing can be inferred. Logging is always
+        on; explicit kwargs override auto-derivation.
+        """
+        # Walk the stack to find the first frame outside this module.
+        caller_name = ""
+        for frame_info in inspect.stack()[1:]:
+            if Path(frame_info.filename).resolve() != Path(__file__).resolve():
+                caller_name = Path(frame_info.filename).name
+                break
+
+        derived_slug, derived_stage = None, None
+        m = self._CALLER_RX.match(caller_name)
+        if m:
+            derived_slug = m.group("slug")
+            derived_stage = int(m.group("stage"))
+        else:
+            m = self._CALLER_E2E_RX.match(caller_name)
+            if m:
+                derived_slug = m.group("slug")
+                derived_stage = "e2e"
+
+        eff_slug = slug or derived_slug or "gate"
+        eff_stage = stage if stage is not None else (derived_stage if derived_stage is not None else "x")
+        if gate:
+            label = re.sub(r"[^A-Za-z0-9._-]+", "_", gate)
+        else:
+            # Derive a stable label from the command's first token
+            # (e.g. "bun", "pytest", "go"). Falls back to "cmd" if cmd is empty.
+            tokens = cmd.strip().split()
+            first_token = tokens[0] if tokens else ""
+            label = re.sub(r"[^A-Za-z0-9._-]+", "_", (first_token or "cmd"))[:24] or "cmd"
+
+        prefix = f"{eff_slug}-stage-{eff_stage}-{label}"
+        return prefix, label
+
     def run_gate(
         self,
         cmd: str,
@@ -99,15 +146,18 @@ class _Verifier:
     ) -> bool:
         """Execute a shell gate command. Pass = exit 0.
 
-        Full stdout+stderr is written to docs/plans/logs/<slug>-stage-<N>-<gate>.log
-        when slug/stage/gate are provided. The tail (last 20 lines) is shown in
-        the on-screen FAIL detail; the log file always has the complete output.
-        Partial output is preserved on timeout.
+        Logging is ALWAYS ON. Full stdout+stderr is written to
+        docs/plans/logs/<prefix>-<timestamp>.log. The timestamp prevents retry
+        runs from clobbering the previous attempt's evidence. Slug, stage, and
+        gate are auto-derived from the calling script's filename when not
+        passed explicitly. The tail (last 20 lines) is shown in the on-screen
+        FAIL detail; the log file always has the complete output. Partial
+        output is preserved on timeout.
         """
-        log_path: Path | None = None
-        if slug and stage is not None and gate:
-            safe_gate = re.sub(r"[^A-Za-z0-9._-]+", "_", gate)
-            log_path = _logs_dir() / f"{slug}-stage-{stage}-{safe_gate}.log"
+        # Use a sub-second timestamp so retries fired in the same second get unique names.
+        ts = datetime.now().strftime("%Y%m%d-%H%M%S-%f")[:-3]
+        prefix, gate_label = self._derive_log_prefix(cmd, slug, stage, gate)
+        log_path = _logs_dir() / f"{prefix}-{ts}.log"
 
         stdout, stderr, returncode, timed_out = "", "", -1, False
         try:
@@ -125,9 +175,15 @@ class _Verifier:
             stdout = exc.stdout.decode("utf-8", errors="replace") if isinstance(exc.stdout, bytes) else (exc.stdout or "")
             stderr = exc.stderr.decode("utf-8", errors="replace") if isinstance(exc.stderr, bytes) else (exc.stderr or "")
 
-        if log_path is not None:
-            header = f"$ {cmd}\n# cwd={cwd or os.getcwd()} timeout={timeout}s timed_out={timed_out} returncode={returncode}\n\n"
-            log_path.write_text(header + "--- STDOUT ---\n" + stdout + "\n--- STDERR ---\n" + stderr)
+        header = (
+            f"$ {cmd}\n"
+            f"# cwd={cwd or os.getcwd()} timeout={timeout}s timed_out={timed_out} "
+            f"returncode={returncode} ts={ts} gate_label={gate_label}\n\n"
+        )
+        log_path.write_text(
+            header + "--- STDOUT ---\n" + stdout + "\n--- STDERR ---\n" + stderr,
+            encoding="utf-8",
+        )
 
         if timed_out:
             return self._record(
@@ -290,7 +346,34 @@ class _Verifier:
 
     # ----------------------------------------------------------- plan validation
 
-    _PLACEHOLDER_RX = re.compile(r"<FILL[^>]*>|<FILL-OR-DELETE[^>]*>|<repo>|<plan-slug>|<plan title>|<absolute path>")
+    # Catches scaffold-generated <FILL: ...> and <FILL-OR-DELETE: ...> markers
+    # plus the bare placeholders from the SKILL.md Plan structure prose
+    # (in case someone hand-builds a plan from the skill template instead of
+    # invoking scaffold.py). Avoids generic <[a-z]+> to prevent false positives
+    # on legitimate angle-bracket content (HTML, generics, SQL types).
+    _PLACEHOLDER_RX = re.compile(
+        r"<FILL[^>]*>"
+        r"|<FILL-OR-DELETE[^>]*>"
+        r"|<repo>"
+        r"|<plan-slug>"
+        r"|<plan title>"
+        r"|<absolute path>"
+        r"|<absolute plan path>"
+        r"|<branch>"
+        r"|<os>"
+        r"|<cmd>"
+        r"|<cmds>"
+        r"|<path>"
+        r"|<paths>"
+        r"|<title>"
+        r"|<intent>"
+        r"|<atomic IDs>"
+        r"|<one sentence>"
+        r"|<list>"
+        r"|<table of file -> stages that touch it>"
+        r"|<commands \+ manual smoke[^>]*>"
+        r"|<FILL or \"none\">"
+    )
 
     def assert_no_placeholders(self, plan_path: str) -> bool:
         """Plan file contains no unfilled scaffold placeholders.
