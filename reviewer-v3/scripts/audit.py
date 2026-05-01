@@ -7,6 +7,13 @@ Inputs:
   --not-exercised <path|->   optional `not exercised:` block from the report
                              header. Used to enforce ADR-0003 F2 (one line per
                              command, no class bundling).
+  --report <path|->          optional full report body (or any subset
+                             containing `## Findings` / `## Verification`).
+                             Material files whose path is cited in this body
+                             are inferred as implicit-reviewed and removed
+                             from `gap`. Coverage format F intentionally has
+                             no positive marker; this flag lets the audit
+                             observe the citations that already exist.
 
 Output (stdout): one of
   audit: pass\nmaterial: N\nexcluded: N\nnot_reviewed: 0\ngap: none
@@ -155,6 +162,31 @@ def aggregate_reasons(reasons: list[str]) -> str:
     return "; ".join(seen) if seen else "no reason"
 
 
+def find_cited_files(text: str, material: set[str]) -> set[str]:
+    """Return the subset of `material` whose path is cited as a token in `text`.
+
+    A path is "cited" when it appears with no word-character or `/` immediately
+    before it, and no word-character or `.` immediately after it. This catches
+    `Dockerfile:26`, `src/main.ts:282-346`, `` `tests/contract.test.ts` ``, and
+    similar — but does not match `Dockerfile.dev` when only `Dockerfile` is
+    material, nor `app/src/main.ts` when only `src/main.ts` is material.
+
+    Used to infer implicit-reviewed files under Coverage format F (which has no
+    positive marker): if the LLM cites a material file in `## Findings` or
+    `## Verification`, count it as reviewed instead of leaking it into `gap`.
+    """
+    if not text or not material:
+        return set()
+    cited: set[str] = set()
+    for path in material:
+        if not path:
+            continue
+        pattern = re.compile(rf"(?<![\w/]){re.escape(path)}(?![\w.])")
+        if pattern.search(text):
+            cited.add(path)
+    return cited
+
+
 def files_under_prefix(prefix: str, material: set[str]) -> set[str]:
     """Return material files whose path starts with `prefix`.
 
@@ -253,12 +285,113 @@ def maybe_emit_auto_narrow(
         print(PROVOCATION.format(n=not_reviewed_count, m=material_count, reason=reason))
 
 
+SKIP_CLAUSES = {
+    "skip:trivial-diff",
+    "skip:docs-only",
+    "skip:verifier-infeasible",
+    "skip:no-tests-touched",
+    "skip:user-narrowed",
+}
+
+MANDATORY_SUBAGENTS = ("defect-hunter", "test-auditor", "verifier")
+
+
+def parse_invoked_line(report_text: str) -> dict[str, int] | None:
+    """Parse `invoked: defect-hunter (N), test-auditor (N), verifier (N), scout (N)`
+    from ## Notes. Returns dict of name->count, or None if line absent.
+    `invoked: none` returns all-zero dict."""
+    import re
+    m = re.search(r"^\s*[-*]?\s*invoked:\s*(.+)$", report_text, re.MULTILINE)
+    if not m:
+        return None
+    body = m.group(1).strip()
+    if body.lower() == "none":
+        return {name: 0 for name in MANDATORY_SUBAGENTS + ("scout",)}
+    counts: dict[str, int] = {}
+    for entry in re.finditer(r"([a-z-]+)\s*\((\d+)\)", body):
+        counts[entry.group(1)] = int(entry.group(2))
+    return counts
+
+
+def parse_skip_clauses(report_text: str) -> dict[str, str]:
+    """Find lines like `skip:<clause> — <subagent>: <reason>` in ## Notes.
+    Returns dict subagent->clause. Subagent must be one of MANDATORY_SUBAGENTS."""
+    import re
+    skips: dict[str, str] = {}
+    for m in re.finditer(
+        r"(skip:[a-z-]+)\s*[—-]+\s*([a-z-]+)\s*:", report_text
+    ):
+        clause, subagent = m.group(1), m.group(2)
+        if clause in SKIP_CLAUSES and subagent in MANDATORY_SUBAGENTS:
+            skips[subagent] = clause
+    return skips
+
+
+def threshold_crossed(
+    material: set[str], not_exercised_text: str
+) -> tuple[bool, list[str]]:
+    """Return (crossed, reasons). Mirrors SKILL.md threshold definition."""
+    import re
+    reasons: list[str] = []
+    if len(material) > 10:
+        reasons.append(f"material_set={len(material)} > 10")
+    infra_pat = re.compile(
+        r"(^|/)(Dockerfile|docker-compose|\.github/workflows/|\.gitlab-ci|tests?/)"
+    )
+    infra_hits = [f for f in material if infra_pat.search(f)]
+    if infra_hits:
+        reasons.append(f"infra/test paths touched ({len(infra_hits)} files)")
+    return (bool(reasons), reasons)
+
+
+def check_subagent_mandate(
+    report_text: str | None,
+    material: set[str],
+    not_exercised_text: str,
+) -> list[str]:
+    """Return list of format-defect lines if mandate is violated. Empty if OK."""
+    crossed, reasons = threshold_crossed(material, not_exercised_text)
+    if not crossed:
+        return []
+    if report_text is None:
+        return [
+            "format-defect: subagent-mandate-unverifiable",
+            "  - threshold crossed but --report not supplied; cannot verify invoked: line",
+            f"  - threshold reasons: {'; '.join(reasons)}",
+        ]
+    invoked = parse_invoked_line(report_text)
+    if invoked is None:
+        return [
+            "format-defect: subagent-invoked-line-missing",
+            "  - threshold crossed; ## Notes must contain `invoked: ...` line",
+            f"  - threshold reasons: {'; '.join(reasons)}",
+        ]
+    skips = parse_skip_clauses(report_text)
+    offenders: list[str] = []
+    for name in MANDATORY_SUBAGENTS:
+        if invoked.get(name, 0) >= 1:
+            continue
+        if name in skips:
+            continue
+        offenders.append(name)
+    if not offenders:
+        return []
+    out = ["format-defect: subagent-skip-uncited"]
+    for name in offenders:
+        out.append(
+            f"  - {name}: count=0 and no `skip:<clause> — {name}:` line found "
+            f"in ## Notes (threshold crossed: {'; '.join(reasons)})"
+        )
+    return out
+
+
 def emit_format_defects(
     glob_offenders: list[str],
     category_empty: list[tuple[str, str]],
     bundled: list[str],
+    subagent_defects: list[str] | None = None,
 ) -> None:
-    if not (glob_offenders or category_empty or bundled):
+    if not (glob_offenders or category_empty or bundled or subagent_defects):
         return
     print()
     if glob_offenders:
@@ -274,6 +407,9 @@ def emit_format_defects(
         print("format-defect: bundled-not-exercised")
         for offender in bundled:
             print(f"  - {offender}")
+    if subagent_defects:
+        for line in subagent_defects:
+            print(line)
 
 
 def main() -> int:
@@ -284,6 +420,16 @@ def main() -> int:
         "--not-exercised",
         default=None,
         help="Optional path to the report's `not exercised:` block, or '-' for stdin",
+    )
+    ap.add_argument(
+        "--report",
+        default=None,
+        help=(
+            "Optional path to the full report body (or `## Findings` + "
+            "`## Verification` excerpt), or '-' for stdin. Material files "
+            "cited in this body are inferred as implicit-reviewed and removed "
+            "from `gap`."
+        ),
     )
     args = ap.parse_args()
 
@@ -315,7 +461,15 @@ def main() -> int:
         category_lines.append(f"category: {label} — {len(matched)} files under prefix")
 
     explicit_not_reviewed = explicit_paths | category_covered
-    gap = sorted(material - explicit_not_reviewed - claimed_excluded - {""})
+
+    cited: set[str] = set()
+    if args.report:
+        report_text = load_text(args.report)
+        cited = find_cited_files(report_text, material)
+
+    gap = sorted(
+        material - explicit_not_reviewed - claimed_excluded - cited - {""}
+    )
 
     not_reviewed_count = len(explicit_not_reviewed)
     reasons_list = [r for _, r in not_reviewed_paths] + [r for _, r in categories]
@@ -327,23 +481,31 @@ def main() -> int:
     not_reviewed_summary = ", ".join(not_reviewed_summary_parts)
 
     bundled: list[str] = []
+    ne_text_raw = ""
     if args.not_exercised:
-        ne_text = load_text(args.not_exercised)
-        ne_entries = parse_not_exercised_block(ne_text)
+        ne_text_raw = load_text(args.not_exercised)
+        ne_entries = parse_not_exercised_block(ne_text_raw)
         # If the file does not contain a `not exercised:` header, treat each
         # bullet line as an entry — supports passing the bare block.
         if not ne_entries:
             ne_entries = [
                 line.strip()[2:].strip()
-                for line in ne_text.splitlines()
+                for line in ne_text_raw.splitlines()
                 if line.strip().startswith("- ")
             ]
         bundled = detect_bundled(ne_entries)
+
+    report_text_for_mandate = report_text if args.report else None
+    subagent_defects = check_subagent_mandate(
+        report_text_for_mandate, material, ne_text_raw
+    )
 
     out_lines = [
         f"material: {len(material)}",
         f"excluded: {len(fact_excluded)}",
     ]
+    if cited:
+        out_lines.append(f"cited_in_report: {len(cited)}")
 
     if gap:
         print("audit: gap")
@@ -356,7 +518,7 @@ def main() -> int:
         for line in category_lines:
             print(line)
         print("gap: " + ", ".join(gap))
-        emit_format_defects(glob_offenders, category_empty, bundled)
+        emit_format_defects(glob_offenders, category_empty, bundled, subagent_defects)
         return 2
 
     if not_reviewed_count:
@@ -370,8 +532,8 @@ def main() -> int:
         maybe_emit_auto_narrow(
             not_reviewed_count, reasons_list, len(material), narrowed_flag
         )
-        emit_format_defects(glob_offenders, category_empty, bundled)
-        return 0
+        emit_format_defects(glob_offenders, category_empty, bundled, subagent_defects)
+        return 2 if subagent_defects else 0
 
     print("audit: pass")
     for line in out_lines:
@@ -380,8 +542,8 @@ def main() -> int:
     for line in category_lines:
         print(line)
     print("gap: none")
-    emit_format_defects(glob_offenders, category_empty, bundled)
-    return 0
+    emit_format_defects(glob_offenders, category_empty, bundled, subagent_defects)
+    return 2 if subagent_defects else 0
 
 
 if __name__ == "__main__":

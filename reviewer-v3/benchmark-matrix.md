@@ -16,26 +16,30 @@ Target across all rows: `baileys2api_bun`, branch `feat/dev-setup`, brief
 | G | ADR-0001 (Stop-hook variant) | APPROVED-WITH-FIXES | 1/7 | audit absent | honest about hook missing | Stop hook not installed → audit silently skipped; verifier never invoked; 487/494 files marked not-reviewed |
 | H | ADR-0001 + ADR-0002 | BLOCKED | ~2/7 (1 regression on `$GH_TOKEN_PKG`) | audit populated; not-exercised present; narrowed-by-user-request flag set | A1 worked: manual audit invocation; sharp NEW findings (legacyConsumerEntries shape mismatch, logger env-at-call, missing depends_on, media-thumbs absence, docker build BLOCKED) | A2 escape over-applied (typecheck/lint claimed infeasible without proof); A3 glob hole (`src/**/*` patterns defeated per-file enumeration); 80 material files un-enumerated |
 | I | ADR-0001 + ADR-0002 | BLOCKED | **4/7** (lockfile glob, restore-on-failure newly caught; 1 still-regression on `$GH_TOKEN_PKG`) | audit populated; gap enumerated by file (21 specific paths); narrowed-by-user-request flag set; A3 categories show counts | **Best run yet.** Caught 2 matrix items no previous v3 run got (`bun.lockb*`/`bun.lock` mismatch in Dockerfile; docker:build && chain leaves repo in npm-aliased state on build failure). NEW deep finding F1 (SIGTERM race in `withShutdownGuard`) that no prior reviewer (v1, v2, native) discovered. Concrete A2 reason class ("sandbox lacks bun toolchain") instead of vague "infeasible". | **Audit measurement bug**: 21 files reported as `gap` are in fact reviewed (cited in findings + listed in Verification "what I read"); audit script reads only `excluded` + `not-reviewed`, can't see implicit-reviewed evidence. Verifier still not invoked even when sandbox-class reason was concrete. |
+| J | ADR-0001 + ADR-0002 + ADR-0003 + audit fix | APPROVED-WITH-FIXES | **2/7** (regression vs I: lockfile glob and restore-on-failure dropped; triggerInbound caught at MEDIUM) | **audit measurement bug fixed**: `cited_in_report: 9` field added; `gap: none`; `narrowed-by-user-request: true` honored | **Audit fix verified.** New findings F4 (.env PORT/LOG_FORMAT drift defeats 3 harness assertions — neither I nor any earlier run caught) and F5 (process-meta: dev-setup-report row 5 verdict not flipped after DEFECT-2 fix) — both non-matrix but real-value. F6 INFO correctly handles NATS-drain false positive. Deep verdict adjudication on brief §4 12/12. | **Failure mode 6 — narrative trust**: J marked `Dockerfile`, `scripts/prepare-release.sh`, `package.json`, `Dockerfile.dev` as `not-reviewed (report §10/§11 records audit completed)` — trusting `dev-setup-report.md` as evidence of prior audit. Result: lockfile glob (I's F2) and docker:build restore (I's F6) were not re-verified independently. Verdict ceiling fired (`partial(scope-auto-narrowed)`) but specific high-value matrix catches were lost. |
 
 ## Per-Criterion Tracking
 
-| Criterion | Expected | A (v1) | B (v1+) | C (Codex) | D (CC native) | E (v2) | F (v2 cal.) | G (v3) | H (v3+ADR2) | I (v3+ADR2) |
-|---|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
-| red `bun test:unit` | catch | — | — | ✓ | ✓ | ✓ | ✓ | ✗ | partial (contract harness reported as HIGH from in-repo report) | not run (sandbox lacks bun) — concrete reason class |
-| false-green `triggerInbound`/`triggerOutbound` | catch | ✓ | ✗ | ✓ | ✓ | ✓ | ✗ | ✗ | partial (only `triggerInbound` /health flagged) | OQ2 raises false-green risk via TDD framing on `triggerInbound`; `triggerOutbound` missed |
-| `bun.lockb*` vs `bun.lock` lockfile mismatch | catch | partial | softened | ✓ | partial | ✓ | ✗ | ✗ | ✗ | **✓ (F2)** |
-| `docker:build` restore-on-failure | catch | partial | softened | ✓ | partial | ✓ | ✗ | ✗ | ✗ | **✓ (F6)** |
-| duplicate `WA_STORE_BACKEND` in compose | catch | ✗ | ✗ | ✗ | ✓ | ✓ | ✗ | ✗ | ✗ | ✗ |
-| stale top-level `docker-compose.yml` drift | MEDIUM | ✓ | ✗ | ✗ | ✓ | ✓ | ✗ | ✗ | ✗ | ✗ |
-| `$GH_TOKEN_PKG` vs `${GH_TOKEN_PKG}` syntax | LOW/MEDIUM | ✗ | ✗ | ✗ | ✓ | weak | ✓ | ✓ | ✗ (regression) | ✗ |
-| `SESSION_DIR` documented derivation | OPEN_QUESTION / no finding | n/a | n/a | overreach | overreach | overreach | OQ | OQ + INFO | not raised | F5 MEDIUM (manifest-vs-brief consistency, not over-classified) |
-| credential leakage via image copy | OPEN_QUESTION/MEDIUM unless proven | n/a | n/a | n/a | n/a | overreach risk | avoided | avoided | avoided | avoided |
-| `## Notes` praise-free | required | clean | leaked | clean | leaked | leaked | leaked-light | clean | clean | clean |
-| `audit:` field populated | required (post-ADR-0001) | n/a | n/a | n/a | n/a | n/a | n/a | ✗ | ✓ | ✓ |
-| `narrowed-by-user-request:` flag when scope shrinks | required (post-ADR-0002) | n/a | n/a | n/a | n/a | n/a | n/a | n/a | ✓ | ✓ |
-| **NEW**: SIGTERM race in `withShutdownGuard` (root-cause depth) | bonus | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a | **✓ (F1)** — no prior reviewer caught |
-| **NEW**: `extra_hosts: "host-gateway:host-gateway"` semantic bug | bonus | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a | **✓ (F4)** |
-| **NEW**: `tests/` excluded from container breaks acceptance #11 | bonus | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a | **✓ (F7)** |
+| Criterion | Expected | A (v1) | B (v1+) | C (Codex) | D (CC native) | E (v2) | F (v2 cal.) | G (v3) | H (v3+ADR2) | I (v3+ADR2) | J (v3+ADR3+audit fix) |
+|---|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
+| red `bun test:unit` | catch | — | — | ✓ | ✓ | ✓ | ✓ | ✗ | partial | not run (sandbox lacks bun) | not run (GH_TOKEN_PKG expired) — concrete |
+| false-green `triggerInbound`/`triggerOutbound` | catch | ✓ | ✗ | ✓ | ✓ | ✓ | ✗ | ✗ | partial | OQ2 inbound only | **F3 MEDIUM on triggerInbound** (sharper); outbound missed |
+| `bun.lockb*` vs `bun.lock` lockfile mismatch | catch | partial | softened | ✓ | partial | ✓ | ✗ | ✗ | ✗ | **✓ (F2)** | **✗ regression** (Dockerfile marked not-reviewed via narrative trust) |
+| `docker:build` restore-on-failure | catch | partial | softened | ✓ | partial | ✓ | ✗ | ✗ | ✗ | **✓ (F6)** | **✗ regression** (package.json marked not-reviewed via narrative trust) |
+| duplicate `WA_STORE_BACKEND` in compose | catch | ✗ | ✗ | ✗ | ✓ | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| stale top-level `docker-compose.yml` drift | MEDIUM | ✓ | ✗ | ✗ | ✓ | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| `$GH_TOKEN_PKG` vs `${GH_TOKEN_PKG}` syntax | LOW/MEDIUM | ✗ | ✗ | ✗ | ✓ | weak | ✓ | ✓ | ✗ (regression) | ✗ | ✗ |
+| `SESSION_DIR` documented derivation | OPEN_QUESTION / no finding | n/a | n/a | overreach | overreach | overreach | OQ | OQ + INFO | not raised | F5 MEDIUM | not raised |
+| credential leakage via image copy | OPEN_QUESTION/MEDIUM unless proven | n/a | n/a | n/a | n/a | overreach risk | avoided | avoided | avoided | avoided | avoided |
+| `## Notes` praise-free | required | clean | leaked | clean | leaked | leaked | leaked-light | clean | clean | clean | clean |
+| `audit:` field populated | required (post-ADR-0001) | n/a | n/a | n/a | n/a | n/a | n/a | ✗ | ✓ | ✓ | ✓ |
+| `narrowed-by-user-request:` flag when scope shrinks | required (post-ADR-0002) | n/a | n/a | n/a | n/a | n/a | n/a | n/a | ✓ | ✓ | ✓ |
+| Audit `gap` measurement (no false-positive on cited files) | required (post audit fix) | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a | ✗ (21 false-positive gap) | **✓** (`cited_in_report: 9`, `gap: none`) |
+| **NEW**: SIGTERM race in `withShutdownGuard` (root-cause depth) | bonus | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a | **✓ (F1)** — unique to I | trusted via report (F5 only flags missing verdict flip) |
+| **NEW**: `extra_hosts: "host-gateway:host-gateway"` semantic bug | bonus | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a | **✓ (F4)** | not raised |
+| **NEW**: `tests/` excluded from container breaks acceptance #11 | bonus | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a | **✓ (F7)** | not raised |
+| **NEW**: `.env` PORT/LOG_FORMAT drift defeats harness assertions | bonus | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a | **✓ (F4)** — unique to J |
+| **NEW**: dev-setup-report row 5 verdict not flipped post-fix | bonus (process meta) | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a | **✓ (F5)** — unique to J |
 
 ## Run G — reviewer-v3 (ADR-0001, Stop-hook variant)
 
@@ -125,6 +129,37 @@ Target across all rows: `baileys2api_bun`, branch `feat/dev-setup`, brief
 - Verifier still not invoked. Sandbox-lacks-bun is a legitimate reason for `bun test`, but `git`, `grep`, `ls`, etc. were used directly by the main reviewer — no parallelism, no specialist context.
 - 3 of 7 matrix items still missed (`triggerOutbound`/sendText, duplicate `WA_STORE_BACKEND`, stale top-level `docker-compose.yml`, `$GH_TOKEN_PKG` syntax). The first two would require directly opening the not-reviewed `tests/integration/` and `docker-compose.yml` (top-level) files. The brief-narrowed scope made this a deliberate skip.
 
+## Run J — reviewer-v3 (ADR-0001 + ADR-0002 + ADR-0003 + audit fix)
+
+**Date:** 2026-05-01
+**Verdict:** APPROVED-WITH-FIXES
+**Token cost:** unmeasured
+
+**Findings emitted:**
+- F1 HIGH: brief §4 final acceptance "all 12 ADR-0011/0017 assertions green" not met; last harness 2/9. Verdict adjudication recommends explicit re-scope or hold-for-upstream.
+- F2 MEDIUM: `src/main.ts:171-175` — `legacyConsumerEntries` shape `{stream, name, legacyPrefix}` diverges from brief §2b `{subject: 'whatsapp.events.${client}.>'}`; doc-vs-code drift.
+- F3 MEDIUM: `tests/contract.test.ts:74-76` — `triggerInbound /health` stub guarantees assertions #1-3, #7, #8, #12 cascade-fail. (Run I had this as LOW; J promoted to MEDIUM with concrete cascade analysis.)
+- F4 MEDIUM: `.env` PORT/LOG_FORMAT drift (PORT=8001 vs 32001, LOG_FORMAT=pretty vs json) defeats assertions #9-11 even though channel behavior is correct. **Unique to J — neither I nor any earlier run caught this.** Recommends precondition check at top of `tests/contract.test.ts`.
+- F5 MEDIUM: `dev-setup-report.md` row 5 verdict not flipped after DEFECT-2 fix (commit `8c100d3` + measurements at §14/§15); ambiguous to a reader scanning §2. **Process-meta finding — unique to J.**
+- F6 INFO: brief §4 "NATS drain" criterion correctly verified non-applicable (NatsClient.close drains internally per `@channel2api/nats-transport`); recorded for completeness, not flagged. **Correct INFO classification — no over-classification.**
+
+**Strengths over Run I:**
+- **Audit measurement bug fixed.** New field `cited_in_report: 9` in audit_output; `gap: none`. The 21-file false-positive gap of Run I is gone.
+- F4 (.env drift) is a genuinely new high-value finding.
+- F6 (NATS drain INFO) shows correct calibration restraint where prior runs over-classified.
+- Verdict adjudication on F1 (12/12 not met) is sharper than Run H's analogous finding.
+
+**Weaknesses (regressions from Run I):**
+- **Lockfile glob (Run I F2) and docker:build restore-on-failure (Run I F6) not raised.** Both matrix items dropped. The cause is **Failure mode 6 — narrative trust**: J marked `Dockerfile`, `Dockerfile.dev`, `scripts/prepare-release.sh`, `package.json`, `manifest.yaml` as `not-reviewed` with reasons like *"acceptance not under contention; report §10 records audit completed"* — trusting `dev-setup-report.md` as evidence of prior audit instead of re-reading.
+- **F1 SIGTERM race depth lost.** Run I's F1 was a deep `withShutdownGuard` race-condition root-cause that no prior reviewer caught. J accepts the report's claim that fix is in place (commit `8c100d3` + drain measurements 703-930ms) and only flags the missing verdict-flip in §2 (J's F5).
+- Recall on the original 7-item matrix dropped from 4/7 (Run I) to 2/7 (Run J).
+
+**New observation: failure mode 6 — narrative trust**
+- When the repo includes a self-audit document (here, `dev-setup-report.md` with stage-by-stage acceptance evidence), the reviewer reasonably trusts it as evidence of prior audit and skips re-reading those files.
+- This is a **defensible judgment** in many contexts (avoid duplicate work; trust calibrated narrative). But it inverts what makes a review valuable: **independent verification**.
+- Run J is APPROVED-WITH-FIXES; Run I was BLOCKED. The gap between them is that I independently found `bun.lockb*` and `docker:build` defects by reading those files; J inherited the report's positive assessment and missed both.
+- **Open question for v3 design**: should the reviewer have a "trust threshold" for in-repo self-audit documents? Or should the soul of the main reviewer ("creating a feeling of completeness where there was only partial coverage is my unforgivable failure") explicitly forbid trusting any document the reviewer has not independently verified? Current SKILL is silent.
+
 ## Open Thinking (Pre-ADR-0003)
 
 User signal: avoid adding more "locks" (cadeados). The pattern in v1 → v2 → v3
@@ -155,28 +190,47 @@ Decision deferred. Worth a fresh-context conversation before committing.
 
 ## Promotion Status
 
-reviewer-v3 is **close to promotable** per ADR-0001 D1, pending one cirurgical
-fix.
+reviewer-v3 is **promotable on different axes than the matrix expected**, with
+one new failure mode (narrative trust) to address before declaring done.
 
 - Run G failed on audit firing.
 - Run H passed audit firing but failed recall on 5/7 matrix items, regressed
   on 1, and revealed two new failure modes (glob hole, A2 over-escape).
-- **Run I**: 4/7 matrix recall + 3 novel high-quality findings (F1 SIGTERM
-  race, F4 host-gateway syntax, F7 tests-excluded-from-image); A2 reason
-  class concrete; A3 enumeration of `not-reviewed` categories with counts;
-  audit fired and emitted gap details. **Quality jump is real.**
+- Run I: 4/7 matrix recall + 3 novel high-quality findings (F1 SIGTERM race,
+  F4 host-gateway syntax, F7 tests-excluded-from-image); audit measurement
+  bug observed.
+- **Run J**: 2/7 matrix recall (regression vs I) but **audit measurement bug
+  fixed** (`cited_in_report` field; `gap: none`) and **2 new high-quality
+  findings unique to J** (F4 .env drift, F5 process-meta verdict-not-flipped).
+  F6 INFO shows correct calibration restraint.
 
-The single remaining blocker is the **audit measurement bug** documented
-under Run I: 21 reviewed files appear as `gap` because `audit.py` cannot
-see implicit-reviewed evidence (Coverage format F intentionally omits
-positive markers). This is a **measurement bug, not a behavior bug** —
-the LLM did the right thing; the audit just can't observe it.
+**What the four runs together demonstrate:**
 
-Recommended next step: implement the audit fix described under Run I
-("Fix path") and re-run the same target as **Run J**. If Run J holds the
-recall improvements of I AND the audit reports `pass` (or a real, smaller
-gap), v3 is promotable per ADR-0001 D1.
+- **The audit pipeline now works as designed.** A1 (manual fallback), A2 (verifier expectation), A3 (auto-narrow detection), and the cited-in-report fix all produced visible behavior in the report.
+- **v3 finds real defects no prior reviewer caught.** Across I and J: SIGTERM `withShutdownGuard` race, host-gateway syntax, tests-excluded-from-image, .env drift, process-meta verdict-not-flipped. None of these appeared in any v1/v2/native run.
+- **Per-run consistency is the open weakness.** Each run picks a *different* high-value subset; matrix recall oscillates 1 → 2 → 4 → 2. The variance comes from how the LLM decides what to read independently vs what to trust from in-repo documents.
 
-The `Open Thinking` section above is intentionally preserved as a record of
-the soul-vs-rule choice still pending if the audit fix alone is not enough
-to close remaining gaps.
+**Failure mode 6 — narrative trust** (newly observed in Run J):
+When the repo includes a self-audit document (here, `dev-setup-report.md`),
+the reviewer trusts it as evidence of prior audit and skips re-reading the
+files that document references. Defensible in many contexts; inverts the
+value proposition of independent verification.
+
+Recommended next step: address narrative trust without adding rigid rules.
+Options for a fresh-context conversation (not committing yet):
+
+- **Soul-level**: extend the main reviewer's soul: *"a self-audit document
+  in the repo is evidence of intent, not evidence of correctness; do not
+  mark a file `not-reviewed` because another document claims it was
+  audited unless you have independently confirmed at least the dispositive
+  cited line"*. No rule, no checkbox.
+- **Coverage convention**: introduce `not-reviewed` reason class
+  `trusted-via-prior-audit (<doc>:<section>)` that the audit script counts
+  separately. Surfaces the trust without forbidding it.
+- **Acceptance-mode override**: when the user request is "validate
+  acceptance criteria", the SKILL adds a single line: *"every brief
+  acceptance criterion must be independently verified against source —
+  not via prior reports"*. Domain-specific to validation requests.
+
+The `Open Thinking` section below remains the canonical record of these
+considerations; decisions deferred to a later session.
