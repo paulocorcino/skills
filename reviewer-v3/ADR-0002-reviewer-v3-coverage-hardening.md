@@ -80,11 +80,12 @@ the only path. Hardening:
 - The SKILL prompt instructs the main reviewer to **detect whether the
   Stop hook is active** before emitting the report. Detection is a single
   read of `.claude/settings.json` (or the equivalent settings location)
-  for a hook entry that references `audit.sh`.
-- If the hook is **not active**: the main reviewer must invoke
-  `bash <skill-dir>/scripts/audit.sh` manually with the draft Coverage
-  block as input, before the final report leaves its hands. The literal
-  audit output goes into the required `audit_output:` trailer.
+  for a hook entry that references `stop_audit.py`.
+- If the hook is **not active**: the main reviewer must run
+  `scripts/fact_pack.py` followed by `scripts/audit.py` manually, with
+  the draft Coverage block as `audit.py`'s `--coverage` input, before
+  the final report leaves its hands. The literal audit output goes into
+  the required `audit_output:` trailer.
 - The required `audit:` field stays in the template. Its value comes from
   the hook (when active) or from the manual invocation (when not).
   Emitting the report without `audit:` populated remains a format defect.
@@ -180,7 +181,7 @@ Re-run the same target under the hardened design. Acceptance criteria
 inherit ADR-0001 plus:
 
 - **A1 evidence**: the report's `audit:` field is populated either by
-  hook output or by manual `audit.sh` invocation. Never `not run`.
+  hook output or by manual `fact_pack.py` + `audit.py` invocation. Never `not run`.
 - **A2 evidence**: at least the declared `bun run test:unit` and
   `bun run test:contract` are exercised (verifier or main), OR the
   `not exercised:` line names the concrete blocker for each.
@@ -252,7 +253,7 @@ Risks:
 ADR-0002 is satisfied when:
 
 - SKILL.md contains the A1, A2, A3 rules verbatim.
-- `audit.sh` implements the auto-narrow detection and emits the
+- `audit.py` implements the auto-narrow detection and emits the
   `scope-auto-narrowed:` trailer.
 - Final report template's `audit:` field is enforced as a format defect
   on absence (already in ADR-0001 D8 default; reaffirmed here).

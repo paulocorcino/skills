@@ -5,6 +5,7 @@ scope: <full | partial(<one-phrase reason>)>
 base: <base>
 checks: <executed summary>
 not exercised: <checks/lanes/runtime surfaces with reasons, or none>
+audit: <pass | partial | gap | scope-auto-narrowed>
 
 ## Findings
 
@@ -20,6 +21,8 @@ excluded:
 not-reviewed:
   - <path> (<reason>)
 
+narrowed-by-user-request: <true|false>   # required when scope: partial
+
 ## Open Questions
 
 - <question, or omit section if empty>
@@ -31,3 +34,8 @@ not-reviewed:
 ## Notes
 
 Notes accepts only: scope limits, skipped checks, adjudication caveats, evidence caveats. Praise, "strong positives", strengths, and positive summaries are forbidden.
+
+invoked: verifier (N), defect-hunter (N), test-auditor (N), scout (N)
+
+audit_output: |
+  <literal output of audit.py>

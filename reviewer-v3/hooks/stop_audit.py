@@ -108,11 +108,85 @@ def extract_coverage_block(body: str) -> str:
     return "\n".join(out)
 
 
+def extract_not_exercised_block(body: str) -> str:
+    """Extract the `not exercised:` header field plus its bullet entries.
+
+    The block is the line starting `not exercised:` followed by indented
+    bullet lines (`- ...`). Stops at the next non-bullet, non-blank line
+    that is not indented (i.e. the next header field or section).
+    """
+    if not body:
+        return ""
+    lines = body.splitlines()
+    out: list[str] = []
+    capturing = False
+    for line in lines:
+        stripped = line.strip()
+        if not capturing:
+            if re.match(r"^\s*not\s*exercised\s*:", line, flags=re.IGNORECASE):
+                capturing = True
+                out.append(line)
+            continue
+        # Inside the block.
+        if stripped.startswith("## "):
+            break
+        if stripped.startswith("- "):
+            out.append(line)
+            continue
+        if not stripped:
+            # Blank line: keep collecting in case bullets resume below;
+            # but if the next non-blank is a non-bullet, we'll break there.
+            out.append(line)
+            continue
+        # Non-bullet, non-blank, non-header → next field. Stop.
+        break
+    # Trim trailing blanks.
+    while out and not out[-1].strip():
+        out.pop()
+    return "\n".join(out)
+
+
 def parse_base_from_body(body: str) -> str:
     m = re.search(r"^\s*base:\s*(\S.*?)\s*$", body, flags=re.MULTILINE)
     if m:
         return m.group(1).strip()
     return "origin/main"
+
+
+def parse_verdict_from_body(body: str) -> str:
+    m = re.search(r"^\s*verdict:\s*(\S.*?)\s*$", body, flags=re.MULTILINE)
+    if m:
+        return m.group(1).strip().upper()
+    return ""
+
+
+def parse_auto_narrow_trailer(audit_output: str) -> tuple[bool, str, str]:
+    """Return (auto_narrowed, narrowed_by_user_request, ratio_text).
+
+    `narrowed_by_user_request` is one of "true", "false", "unspecified", "".
+    `ratio_text` is e.g. "487/494" or "" if not parsed.
+    """
+    auto_narrowed = False
+    narrowed = ""
+    ratio = ""
+    head_re = re.compile(
+        r"^scope-auto-narrowed:\s*yes\s*\((\d+)/(\d+)\s*files",
+        re.IGNORECASE,
+    )
+    flag_re = re.compile(
+        r"narrowed-by-user-request:\s*(true|false|unspecified)",
+        re.IGNORECASE,
+    )
+    for line in audit_output.splitlines():
+        head_m = head_re.search(line)
+        if head_m:
+            auto_narrowed = True
+            ratio = f"{head_m.group(1)}/{head_m.group(2)}"
+            continue
+        flag_m = flag_re.search(line)
+        if flag_m:
+            narrowed = flag_m.group(1).lower()
+    return auto_narrowed, narrowed, ratio
 
 
 def run_fact_pack(repo: Path, base: str, target: str, tmpdir: Path) -> Path:
@@ -129,9 +203,16 @@ def run_fact_pack(repo: Path, base: str, target: str, tmpdir: Path) -> Path:
     return out_path
 
 
-def run_audit(coverage: str, fact_pack: Path) -> tuple[int, str]:
+def run_audit(
+    coverage: str, fact_pack: Path, not_exercised: str | None, tmpdir: Path
+) -> tuple[int, str]:
+    cmd = [sys.executable, str(AUDIT), "--coverage", "-", "--fact-pack", str(fact_pack)]
+    if not_exercised and not_exercised.strip():
+        ne_path = tmpdir / "not_exercised.md"
+        ne_path.write_text(not_exercised, encoding="utf-8")
+        cmd.extend(["--not-exercised", str(ne_path)])
     proc = subprocess.run(
-        [sys.executable, str(AUDIT), "--coverage", "-", "--fact-pack", str(fact_pack)],
+        cmd,
         input=coverage,
         capture_output=True,
         text=True,
@@ -203,7 +284,10 @@ def main() -> int:
         with tempfile.TemporaryDirectory(prefix="reviewer-v3-") as td:
             tmpdir = Path(td)
             fact_pack_path = run_fact_pack(repo, base, "working-tree", tmpdir)
-            exit_code, audit_output = run_audit(coverage_block, fact_pack_path)
+            not_exercised_block = extract_not_exercised_block(body)
+            exit_code, audit_output = run_audit(
+                coverage_block, fact_pack_path, not_exercised_block, tmpdir
+            )
 
         if exit_code == 2:
             # Gap: extract the gap line for the provocation reason.
@@ -216,7 +300,27 @@ def main() -> int:
             emit({"decision": "block", "reason": reason})
             return 0
 
-        # pass or partial: approve and surface the audit output as systemMessage.
+        # pass or partial. Apply A3 verdict ceiling: if scope auto-narrowed
+        # without explicit user-request flag and the report still claims plain
+        # APPROVED, provoke a verdict downgrade.
+        auto_narrowed, narrowed_flag, ratio = parse_auto_narrow_trailer(audit_output)
+        verdict = parse_verdict_from_body(body)
+        if (
+            auto_narrowed
+            and narrowed_flag != "true"
+            and verdict == "APPROVED"
+        ):
+            ratio_txt = ratio or "<n>/<m>"
+            ceiling_reason = (
+                f"You declared {ratio_txt} material files as not-reviewed without "
+                "`narrowed-by-user-request: true`. Lower verdict to "
+                "`APPROVED-WITH-FIXES` or widen coverage.\n\n"
+                f"{audit_output.strip()}"
+            )
+            emit({"decision": "block", "reason": ceiling_reason})
+            return 0
+
+        # Otherwise approve and surface the audit output as systemMessage.
         emit({"decision": "approve", "systemMessage": audit_output.strip()})
         return 0
 
