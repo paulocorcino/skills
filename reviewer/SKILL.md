@@ -552,7 +552,7 @@ not exercised: <comma-separated channels the skill did not run. Default channels
 - 3 defect(s) reclassified to follow-ups: out of scope of the change
 - not reviewed: <package> (XL chain cap — packages_touched=<N>, cap=4)
 
-## Subagent summary
+## Summary
 
 <one line per subagent that ran, e.g.:
 code-reviewer: <findings count>
