@@ -77,7 +77,7 @@ Four subagents are available. `defect-hunter`, `test-auditor`, and `verifier` ar
 
 A review **crosses the threshold** if any of:
 
-- `material_set` (per `fact_pack.py`) contains > 10 files, OR
+- `material_set` (the `material_files` array in `fact_pack.py` output — concept is `material_set`, JSON key is `material_files`) contains > 10 files, OR
 - the diff touches any path matching `Dockerfile*`, `docker-compose*.y?ml`, `.github/workflows/**`, `.gitlab-ci*`, or any `tests/**` / `test/**` directory, OR
 - the diff modifies more than one package/module boundary.
 
@@ -105,6 +105,8 @@ Any other reason is not a skip — it is an unjustified omission and the audit w
 | `subagents/scout.md` | Operational/infra-touching changes, late in the review. Inventory only — never severity, never defect claim. **If the change touches `Dockerfile*`, `docker-compose*.yml`, `package.json` scripts, release/build scripts, or `.dockerignore` / `.npmrc` and the read-set has not opened those files, invoke scout.** Trusting an in-repo self-audit document instead of invoking scout is the failure pattern scout exists to prevent. |
 
 Subagents emit `EVIDENCE` lines with a `severity_signal=`; the main reviewer adjudicates final severity per the calibration rules above. All files referenced by subagent findings count toward the audit's reviewed-set. Scout is the exception: it emits an `operational-residue` inventory only, no `EVIDENCE`, no severity.
+
+Each `subagents/<name>.md` file already declares the subagent's role, scope, output shape, and hard rules. When invoking, point the agent at its `subagents/<name>.md` for the role and pass only the delta — what is specific to this review (working directory, branch, files to look at, claims to verify). Do not restate the role, the `EVIDENCE` line format, or the hard rules in the invocation prompt; the subagent reads them from its own file. Do not pre-read `subagents/*.md` — the subagent loads its own role. Open one only to adjudicate a malformed finding.
 
 ## Output shape
 
@@ -153,13 +155,16 @@ When narrowing was explicitly requested by the user (e.g. "review only the brief
 Before emitting the final report, write the draft `## Coverage` block and the full draft report body to disk, then run the two-step pipeline. Pick the invocation form (e.g. `python3` on Linux/macOS, `python` on Windows) for the host environment.
 
 ```
-python3 <skill-dir>/scripts/fact_pack.py --repo <repo> --base <base> --target working-tree > /tmp/fact_pack.json
+python3 <skill-dir>/scripts/fact_pack.py --repo <repo> --base <base> --target HEAD > /tmp/fact_pack.json
 python3 <skill-dir>/scripts/audit.py --coverage /tmp/coverage.md --fact-pack /tmp/fact_pack.json --not-exercised /tmp/not_exercised.md --report /tmp/report.md
 ```
 
 - `<repo>` is the target repo's working tree. `<base>` matches the report's `base:` field (e.g. `origin/main`).
+- `--target HEAD` is the right choice when the work under review is committed to a branch (the common case). Use `--target working-tree` only when the work is uncommitted on disk — otherwise `git diff <base>` against an unchanged working tree may underreport.
+- **Tmp-file pre-flight.** Before writing `/tmp/coverage.md`, `/tmp/not_exercised.md`, or `/tmp/report.md`, run `rm -f /tmp/coverage.md /tmp/not_exercised.md /tmp/report.md` in a single Bash call. This prevents the Edit-tool "must Read before Write" failure when a stale file from a prior run exists at those paths.
 - `/tmp/coverage.md` contains the literal `## Coverage` block.
 - `/tmp/not_exercised.md` contains the literal `not exercised:` block from the report header (one line per command, with concrete blocker). Omit `--not-exercised` if the report's `not exercised:` is `none`.
 - `/tmp/report.md` contains the full draft report body (or, at minimum, `## Findings` and `## Verification`). The audit scans this body for material file citations — files cited there count as implicit-reviewed and are removed from `gap`. Coverage format F has no positive marker by design; `--report` is how the audit observes the citations already in the report. Omit `--report` only if there is no `## Findings` to scan.
+- **First-pass `gap` is expected, not a defect.** The first run of `audit.py` typically returns `audit: gap` listing files neither cited in the report nor placed in `not-reviewed`. Treat this as a worklist: for each gap file, either (a) cite it in `## Findings` if it carries a finding, or (b) add it to `not-reviewed` (as an enumerated path or under a `category:` prefix) with a one-phrase reason. Re-run `audit.py` until it returns `pass` or `partial`. Do not edit the audit script to silence the gap.
 
 Place the literal stdout of `audit.py` verbatim in the report's `audit_output:` trailer and populate the header `audit:` field from the first line. The report must always carry a populated `audit:` value (`pass | partial | gap | scope-auto-narrowed`).
