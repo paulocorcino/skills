@@ -62,6 +62,19 @@ These defaults must be recorded verbatim under `## Execution policy` in every pl
 
 When `git status` is **not clean** at plan time, the working-tree policy cannot be defaulted safely. Briefly summarize the dirty state and ask the user to choose between `stash-authorized`, `integrate-existing`, or `abort-until-clean` (see `references/working-tree.md`). Single question, not a menu of unrelated decisions.
 
+### Per-stage Tier and Effort classification (planner job)
+
+Every stage block carries `Tier:` and `Effort:` declarations plus a `Tier rationale:` line. The scaffold seeds them at `standard / standard`; the planner adjusts during fill based on the work the stage actually does:
+
+| Stage shape | Default classification |
+|---|---|
+| 1 file, linear order-of-ops, mechanical edits (rename, move, apply listed pattern) | `mechanical / minimal` |
+| 2-5 files, typical coding with light judgment inside the file list | `standard / standard` |
+| Decision about scope, callsite discovered mid-work, semantic refactor, non-obvious ordering invariant | `judgment / extended` |
+| Security, public/cross-repo contract, data migration, irreversible change | `critical / extended` |
+
+The `Tier rationale:` line is mandatory — 1-2 lines naming the specific decision or risk that justifies the tier. This is what the executor reads to confirm the classification fits, and what a reviewer reads to spot over-classification. The plan **never** names a model; mapping `Tier × Effort` to platform resources is the executor's job at runtime.
+
 ### Auto-recommend reviewer gate
 
 Write the recommendation directly into the plan; user can edit before `ExitPlanMode`.
@@ -175,7 +188,9 @@ Each subagent leaves these durable traces:
 - **Do NOT** retry a red stage **unboundedly or with the same prompt** — retries are capped by the Execution policy and each retry must narrow the instruction.
 - **Do NOT** use `git add -A` / `git add .` in hand-off prompts — always explicit paths.
 - **Do NOT** rely on literal line numbers from the plan when writing stages N>=2 — instruct "grep for symbols, line numbers have drifted".
-- **Do NOT** override the subagent model unless the user explicitly asks — inherit from parent by omitting `model`.
+- **Do NOT name models in the plan markdown.** The plan declares `Tier:` (`mechanical | standard | judgment | critical`) and `Effort:` (`minimal | standard | extended`) per stage; the executor at runtime maps those to its own platform's models, picking the cheapest viable combo. Keeps the plan portable across Claude Code, Codex, and future executors without edits.
+- **Do NOT classify every stage as `critical / extended` "to be safe".** Promotion has cost; demotion is free. The End-to-end summary table should show >40% of stages at `mechanical` or `standard` — if not, the decomposition is suspect.
+- **Do NOT auto-promote a stage's model on retry.** If a `mechanical` stage fails twice, the classification was wrong — STOP and replan, do not silently escalate to a bigger model.
 - **Do NOT** allow stages to spawn their own subagents — nested `Agent` calls defeat contextual isolation and the green-to-green audit.
 - **Do NOT** prompt the user for a menu of execution policy choices — defaults are fixed; the only allowed planning question is the working-tree policy when `git status` is dirty.
 - **Do NOT** let the reviewer gate replan or edit code — it returns a verdict only.

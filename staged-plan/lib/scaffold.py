@@ -68,6 +68,36 @@ gate if configured, producing the summary.
 Resuming after a red stage: each hand-off prompt only assumes prior commits
 exist in `git log`, not that they came from subagents. If Stage K was fixed
 manually, relaunch Stage K+1 unchanged. Never re-run committed stages.
+
+### Resource selection vocabulary (read before launching each stage)
+
+Each stage declares `Tier:` (cognitive load) and `Effort:` (reasoning budget).
+The executor at runtime maps these to the cheapest viable resource on its
+platform that meets BOTH dimensions. The plan does NOT name models — that is
+the executor's responsibility (it knows its own lineup and pricing).
+
+**Tier:**
+- `mechanical` — literal execution of a well-specified hand-off (rename, move,
+  apply pattern from list). Smallest model that can follow the instruction.
+- `standard` — typical coding within the declared file list, light judgment.
+- `judgment` — scope decisions, semantic synthesis, non-obvious refactors.
+- `critical` — security, public contract, data migration, irreversible changes.
+
+**Effort:**
+- `minimal` — no extended reasoning; cheapest setting.
+- `standard` — default reasoning budget.
+- `extended` — maximum reasoning budget the executor offers.
+
+**Selection rule:** pick the cheapest model × reasoning combo on your platform
+that meets or exceeds the declared Tier and Effort. Do NOT auto-promote on
+retry — if a `mechanical` stage fails twice, the classification was wrong;
+STOP and replan rather than silently escalating to a bigger model.
+
+**Role defaults** (apply when not overridden by a stage block):
+- Parent / orchestrator: `standard / standard`
+- Stage 0 (pre-flight gates): `mechanical / minimal`
+- Reviewer gate: `critical / extended`
+- Stage N >= 1: declared per stage; absence defaults to `standard / standard`
 """
 
 _PLAN_LANDING_COMMIT_HEADER = """## Plan landing commit (mandatory before Phase 2)
@@ -123,11 +153,24 @@ versioned**: `docs/plans/logs/` is gitignored via the Plan landing commit.
 {report_logs_note}
 
 ## Executor adapter
-- **Claude Code**: use the `Agent` tool, one stage per subagent,
-  `subagent_type: general-purpose`, foreground, omit `model`, omit `run_in_background`.
-- **Codex / other executors**: execute each Hand-off prompt inline in a fresh context
-  window, or via the executor's own delegated-agent mechanism if available.
-  The plan does not depend on Claude-specific tooling beyond this section.
+
+Each stage runs in a fresh context window via whatever delegated-agent
+mechanism the executor provides (Claude Code: `Agent` tool with
+`subagent_type: general-purpose`, foreground, sequential; Codex / others: the
+equivalent fresh-window mechanism, or inline in a clean session if no delegate
+mechanism exists).
+
+**Model & effort selection:** the plan declares `Tier:` and `Effort:` per stage
+(see `## Execution model` § Resource selection vocabulary). The executor maps
+those to its own model lineup, picking the cheapest viable combo. The plan
+itself names no model — only the executor knows what's available and what it
+costs.
+
+Roles when no stage-level override is present:
+- Parent / orchestrator: `standard / standard`
+- Stage 0: `mechanical / minimal`
+- Reviewer gate: `critical / extended`
+- Stage N >= 1: as declared; default `standard / standard`
 """
 
 _REPORT_LOGS_NOTE_COMMITTED = (
@@ -190,6 +233,8 @@ def render_global_conventions(slug: str, report_policy: str) -> str:
 """
 
 STAGE_0 = """## Stage 0 - Pre-flight (mandatory, no feature work, no commit, no versioned report)
+**Tier:** mechanical
+**Effort:** minimal
 Purpose: record baseline state and apply the working-tree policy so later
 failures cannot be blamed on prior repo state. Plan support artifacts
 (`_verify.py`, verify scripts, the plan file) are already committed via the
@@ -215,6 +260,8 @@ the human-readable summary is returned to the parent.
 """
 
 REVIEWER_GATE = """## Reviewer gate (only if Reviewer != none)
+**Tier:** critical
+**Effort:** extended
 After the final stage commits green:
 - reviewer: light -> small subagent validates scope, diff vs. plan, gate
   results, post-stage reports, and obvious risk. Does NOT replan.
@@ -394,6 +441,9 @@ def render_stage(n: int, title: str, slug: str, report_policy: str) -> str:
 
     return f"""<!-- BEGIN STAGE {n} -->
 ## Stage {n} - {title}
+**Tier:** standard         <!-- mechanical | standard | judgment | critical — see § Resource selection vocabulary -->
+**Effort:** standard       <!-- minimal | standard | extended -->
+**Tier rationale:** <FILL: 1-2 lines justifying this Tier/Effort. If the stage is mechanical apply-pattern work, say so; if judgment, name the specific decision the executor must make. The executor uses this to choose the cheapest viable model.>
 **Items:** <FILL: atomic IDs>
 **Scope:** <FILL: one sentence>
 **Scope discipline:** stay within the declared file list; if the stage requires
@@ -470,6 +520,16 @@ def scaffold(args: argparse.Namespace) -> str:
     parts.append(f"""## End-to-end verification (after final stage)
 <FILL: commands + manual smoke. If >3 commands OR invariants to grep,
 generate `docs/plans/{args.slug}-verify-e2e.py` importing `_verify`.>
+
+## End-to-end summary (parent fills after final stage)
+| Stage | Title | Tier | Effort | Model used | Commit SHA | Status | Report |
+|-------|-------|------|--------|------------|------------|--------|--------|
+<!-- one row per stage. `Model used` is what the executor actually selected
+on its platform for the declared Tier/Effort (the executor fills this — the
+plan never prescribes model names). Used post-hoc to audit whether the
+platform mapping is well-calibrated. If <40% of rows are mechanical/standard,
+the decomposition is suspect — too many stages classified as judgment/critical
+defeats the cost-savings purpose. -->
 """)
 
     return "\n".join(parts)

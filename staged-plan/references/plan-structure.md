@@ -119,6 +119,9 @@ human-readable summary is returned to the parent (which surfaces it inline).
 
 <!-- BEGIN STAGE 1 -->
 ## Stage 1 - <title>
+**Tier:** standard         <!-- mechanical | standard | judgment | critical -->
+**Effort:** standard       <!-- minimal | standard | extended -->
+**Tier rationale:** <1-2 lines justifying tier/effort; what the executor uses to pick the cheapest viable model on its platform>
 **Items:** <atomic IDs>
 **Scope:** <one sentence>
 **Scope discipline:** stay within the declared file list; if the stage requires
