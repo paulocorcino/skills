@@ -518,7 +518,6 @@ def scaffold(args: argparse.Namespace) -> str:
     parts.append("## Context\n<FILL: why this track. Constraints. In scope. Out of scope / blocked externally.>\n")
 
     parts.append("## Alternatives considered\n<FILL-OR-DELETE: 1-2 stage decompositions rejected, with reason. Delete this block if you only considered one decomposition.>\n")
-    parts.append("## Open questions\n<FILL-OR-DELETE: items the planner could not resolve from the codebase alone. Each: question, default assumed, stage(s) affected. Delete this block if there are none.>\n")
 
     parts.append(render_global_conventions(args.slug, args.report_policy))
     parts.append(STAGE_0.replace("{slug}", args.slug))

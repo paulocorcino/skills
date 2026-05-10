@@ -31,12 +31,11 @@ This is **prompt chaining with sectioning + gate checks** in Anthropic's effecti
 - No meaningful gates between steps — the green-to-green audit is the main value
 - **Phase 2 (execution) is already underway** — the plan markdown is the contract; do NOT re-invoke this skill to "remember" how to launch stages, verify green, or apply retries. Read the plan's `## Execution model` block instead.
 
-## Two-phase workflow (overview)
+## Workflow (overview)
 
 | Phase | Owner | What happens |
 |---|---|---|
-| 1a. Investigation | Planner (in plan mode, read-only) | EnterPlanMode → read every Critical file end-to-end → decide defaults → present plan summary via `ExitPlanMode` |
-| 1b. Plan materialization | Planner (post-ExitPlanMode) | Run `scaffold.py` → fill `<FILL>` placeholders via `Edit` |
+| 1. Plan design | Planner | Read every Critical file end-to-end → run `scaffold.py` → fill `<FILL>` placeholders via `Edit` |
 | 1.5. Plan landing commit | Planner | Commit plan + `_verify.py` + verify scripts + `.gitignore` rule |
 | 2. Execution | Parent + subagents | Pre-execution gate, launch stages, verify green, retry, end-to-end + reviewer |
 
@@ -44,19 +43,13 @@ Detailed Phase 1.5 + Phase 2 mechanics: see `references/execution.md`.
 
 ## Phase 1 — Plan design
 
-Phase 1 has two sub-phases separated by `ExitPlanMode`. **This separation is mandatory** — `scaffold.py` writes a file, and plan mode in Claude Code blocks file writes. If you try to scaffold inside plan mode, the harness either blocks Bash or forces a hand-written plan into `~/.claude/plans/<auto-slug>.md` (which breaks Phase 1.5: wrong path, no vendored `_verify.py`, no narrowed `.gitignore`, and the executor has to improvise at runtime).
-
-### Phase 1a — Investigation (in plan mode, read-only)
-
-Enter plan mode first (`EnterPlanMode`) if not already active. Plan mode is for **read-only investigation only**: do not attempt scaffold, Edit, or Write here.
-
 **Investigation discipline (mandatory before designing stages):** read every file that will appear in the cross-stage `## Critical files` index **end-to-end**, not just grep snippets. Plans built from excerpts produce stages with stale line numbers, missed callers, and hidden dependencies. If a file is too large to read fully, that's a signal the stage decomposition is wrong — split further.
 
-At the end of Phase 1a, decide all the defaults below (slug, title, stage list, working-tree policy, reviewer recommendation, report policy) and call `ExitPlanMode` with a concise summary of the plan you intend to materialize. Do NOT use `ExitPlanMode` to dump a hand-written plan markdown — that's what `scaffold.py` is for in Phase 1b.
+**Symbol-fallout scan (mandatory when the plan removes, renames, or changes the signature of any exported symbol):** for each such symbol, run `grep -rn '<symbol>' <repo>` (or equivalent). Every hit outside the file declaring the symbol is a call-site that MUST appear in the scope of some stage — either patched, or explicitly deferred with a `// TODO(slice-N)` shim. If you cannot enumerate the call-sites at plan time, the decomposition is incomplete; do not scaffold yet. The backlog specifies *intent*, not *fallout* — back it with an explicit grep.
 
-### Phase 1b — Materialization (post-ExitPlanMode)
+After investigation, decide the defaults below (slug, title, stage list, working-tree policy, reviewer recommendation, report policy), then run `scaffold.py` (Bash) to write the plan file at `<repo-root>/docs/plans/<slug>.md`, and use `Edit` to replace each `<FILL: ...>` and resolve each `<FILL-OR-DELETE: ...>` block. Never hand-write the plan markdown — the scaffold renders ~60% of the boilerplate deterministically and is the only path that respects the location guard.
 
-After `ExitPlanMode`, immediately run `scaffold.py` (Bash) to write the plan file at `<repo-root>/docs/plans/<slug>.md`, then use `Edit` to replace each `<FILL: ...>` and resolve each `<FILL-OR-DELETE: ...>` block. Never hand-write the plan markdown — the scaffold renders ~60% of the boilerplate deterministically and is the only path that respects the location guard.
+> **Plan-mode footnote.** If you are inside plan mode when invoked, do the investigation there (read-only is fine), then call `ExitPlanMode` with a short summary of the plan you intend to materialize before running `scaffold.py` — plan mode blocks file writes, so scaffold cannot run inside it. Do NOT use `ExitPlanMode` to dump a hand-written plan markdown; that's what scaffold is for. If you are not in plan mode, ignore this note.
 
 ### Fixed defaults — do NOT prompt the user for these
 
@@ -146,7 +139,6 @@ Flags:
 1. Every `<FILL: ...>` placeholder must be replaced with real content before the Phase 1.5 landing commit. No `<FILL>` survives in the final plan — the pre-execution gate (`assert_no_placeholders`) will refuse to launch Stage 1 otherwise.
 2. `<FILL-OR-DELETE: ...>` blocks — fill if you have content; delete the entire block if you don't. The planner decides, not the user:
    - `## Alternatives considered`: fill if you genuinely considered >1 stage decomposition; delete otherwise.
-   - `## Open questions`: fill if items couldn't be resolved from the codebase; delete if fully determined. Runtime surprises are already handled by hand-off "STOP and report" + reviewer gate.
 
 The scaffold is a starting point — modify freely. Do NOT re-run scaffold after editing; it will overwrite your work.
 
@@ -214,3 +206,5 @@ Each subagent leaves these durable traces:
 - **Do NOT** allow stages to spawn their own subagents — nested `Agent` calls defeat contextual isolation and the green-to-green audit.
 - **Do NOT** prompt the user for a menu of execution policy choices — defaults are fixed; the only allowed planning question is the working-tree policy when `git status` is dirty.
 - **Do NOT** let the reviewer gate replan or edit code — it returns a verdict only.
+- **Do NOT** ship a plan with open questions for the user. If a question can't be resolved from the code, ask it once before scaffolding (single question, like the working-tree gate) and then scaffold with the answer baked in. The plan markdown is an executable contract, not a discussion document.
+- **Do NOT** trust the backlog to enumerate call-sites of removed/renamed symbols — back the backlog with an explicit grep at plan time. Symbol-fallout discovered mid-stage means Phase 1 was incomplete.

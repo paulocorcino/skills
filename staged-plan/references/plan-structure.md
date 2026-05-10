@@ -79,11 +79,6 @@ if they considered multiple decompositions; deletes this block otherwise.
 Runtime surprises are covered by hand-off "STOP and report" + reviewer gate —
 do not pre-invent them here.>
 
-## Open questions
-<FILL-OR-DELETE: items the planner could not resolve from the codebase alone.
-Each: question / default assumed / stage(s) affected. Delete if plan is fully
-determined. Discoveries during execution are handled by existing gate mechanisms.>
-
 ## Global conventions
 - Build gate: <cmd>
 - Lint/test gates: <cmds>
