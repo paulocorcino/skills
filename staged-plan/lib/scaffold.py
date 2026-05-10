@@ -344,7 +344,15 @@ _HANDOFF_HEADER = """**Hand-off prompt for Stage {n}:**
 >"""
 
 _PRIOR_STATUS_FIRST = "> Status: this is the first feature stage; no prior stage commits exist beyond Stage 0 baseline.\n"
-_PRIOR_STATUS_LATER = "> Status: Stages 1..{prev} committed (confirm with `git log --oneline -{prev}`).\n"
+_PRIOR_STATUS_LATER = (
+    "> Status: Stages 1..{prev} committed (confirm with `git log --oneline -{prev}`).\n"
+    "> Prior stages' work is reflected in: (1) the actual code state — run\n"
+    "> `git log --oneline -{prev}` and `git diff HEAD~{prev} HEAD --stat` if you need\n"
+    "> to see what changed; (2) `## Critical files` in the plan (cross-stage index);\n"
+    "> (3) prior stage reports under `docs/plans/<slug>-stage-K-report.md` if you\n"
+    "> need detail on a specific surprise or deviation. Do NOT read other stages'\n"
+    "> BEGIN/END blocks for prior context — git is the source of truth.\n"
+)
 
 
 def _handoff_header(n: int) -> str:
