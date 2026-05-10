@@ -35,17 +35,28 @@ This is **prompt chaining with sectioning + gate checks** in Anthropic's effecti
 
 | Phase | Owner | What happens |
 |---|---|---|
-| 1. Plan design | Planner (in plan mode) | Investigate, decide defaults, scaffold, fill, exit plan mode |
+| 1a. Investigation | Planner (in plan mode, read-only) | EnterPlanMode → read every Critical file end-to-end → decide defaults → present plan summary via `ExitPlanMode` |
+| 1b. Plan materialization | Planner (post-ExitPlanMode) | Run `scaffold.py` → fill `<FILL>` placeholders via `Edit` |
 | 1.5. Plan landing commit | Planner | Commit plan + `_verify.py` + verify scripts + `.gitignore` rule |
 | 2. Execution | Parent + subagents | Pre-execution gate, launch stages, verify green, retry, end-to-end + reviewer |
 
 Detailed Phase 1.5 + Phase 2 mechanics: see `references/execution.md`.
 
-## Phase 1 — Plan design (in plan mode)
+## Phase 1 — Plan design
 
-Enter plan mode first (`EnterPlanMode`) if not already active.
+Phase 1 has two sub-phases separated by `ExitPlanMode`. **This separation is mandatory** — `scaffold.py` writes a file, and plan mode in Claude Code blocks file writes. If you try to scaffold inside plan mode, the harness either blocks Bash or forces a hand-written plan into `~/.claude/plans/<auto-slug>.md` (which breaks Phase 1.5: wrong path, no vendored `_verify.py`, no narrowed `.gitignore`, and the executor has to improvise at runtime).
 
-**Investigation discipline (mandatory before writing the plan):** read every file that will appear in the cross-stage `## Critical files` index **end-to-end**, not just grep snippets. Plans built from excerpts produce stages with stale line numbers, missed callers, and hidden dependencies. If a file is too large to read fully, that's a signal the stage decomposition is wrong — split further.
+### Phase 1a — Investigation (in plan mode, read-only)
+
+Enter plan mode first (`EnterPlanMode`) if not already active. Plan mode is for **read-only investigation only**: do not attempt scaffold, Edit, or Write here.
+
+**Investigation discipline (mandatory before designing stages):** read every file that will appear in the cross-stage `## Critical files` index **end-to-end**, not just grep snippets. Plans built from excerpts produce stages with stale line numbers, missed callers, and hidden dependencies. If a file is too large to read fully, that's a signal the stage decomposition is wrong — split further.
+
+At the end of Phase 1a, decide all the defaults below (slug, title, stage list, working-tree policy, reviewer recommendation, report policy) and call `ExitPlanMode` with a concise summary of the plan you intend to materialize. Do NOT use `ExitPlanMode` to dump a hand-written plan markdown — that's what `scaffold.py` is for in Phase 1b.
+
+### Phase 1b — Materialization (post-ExitPlanMode)
+
+After `ExitPlanMode`, immediately run `scaffold.py` (Bash) to write the plan file at `<repo-root>/docs/plans/<slug>.md`, then use `Edit` to replace each `<FILL: ...>` and resolve each `<FILL-OR-DELETE: ...>` block. Never hand-write the plan markdown — the scaffold renders ~60% of the boilerplate deterministically and is the only path that respects the location guard.
 
 ### Fixed defaults — do NOT prompt the user for these
 
@@ -77,7 +88,7 @@ The `Tier rationale:` line is mandatory — 1-2 lines naming the specific decisi
 
 ### Auto-recommend reviewer gate
 
-Write the recommendation directly into the plan; user can edit before `ExitPlanMode`.
+Decide the recommendation during Phase 1a investigation; pass it to `scaffold.py` via `--reviewer` (and `--reviewer-reason` if non-`none`). Surface the reason in the Phase 1a `ExitPlanMode` summary so the user can override before materialization.
 
 - `reviewer: deep` — recommended when ≥2 of: ≥5 stages, public/cross-repo contract change, Docker/CI changes, auth or data migration, multi-repo touch.
 - `reviewer: light` — recommended when exactly 1 of those signals is present.
@@ -89,11 +100,20 @@ State the recommendation **with the reason** so the user can override in one edi
 Reviewer: deep — recommended by: 7 stages + public contract + multi-repo. Override with `Reviewer: none` to skip.
 ```
 
-### Plan output location
+### Plan output location (mandatory pre-check)
 
-`<repo>/docs/plans/<plan-slug>.md` (inside the current git repo). Post-stage reports also go in `<repo>/docs/plans/` as `<plan-slug>-stage-{N}-report.md`. Fall back to `~/.claude/plans/` only when not inside a git repo.
+Before invoking `scaffold.py`, the planner MUST run:
 
-**Legacy path migration:** `<repo>/.claude/plans/` is deprecated (it triggers permission prompts for subagents). If the repo already has plans there, `git mv` them to `<repo>/docs/plans/` as part of the Phase 1.5 landing commit (same commit that lands the new plan). New plans must never be written to `<repo>/.claude/plans/`.
+```
+git rev-parse --show-toplevel
+```
+
+- If the command **fails** (cwd is not inside a git repo): abort and instruct the user to re-invoke the skill from inside the target repo. Do NOT scaffold to `~/.claude/plans/` for repo work — that breaks Phase 1.5 (vendoring `_verify.py`, narrowing `.gitignore`, landing commit) and forces the executor to improvise at runtime.
+- If the command **succeeds**: the output path MUST be `<that-path>/docs/plans/<plan-slug>.md`. Post-stage reports go in the same directory.
+
+`scaffold.py` enforces this: `--output` outside `<repo-root>/docs/plans/` exits with code 4 unless `--allow-outside-repo` is passed (escape hatch for genuine no-repo planning sessions only — never for work targeting a repo).
+
+**Never** write to `<repo>/.claude/plans/` — deprecated, triggers permission prompts for subagents.
 
 ### Scaffold first, then fill (mandatory)
 
@@ -123,7 +143,7 @@ Flags:
 
 ### After scaffolding — fill rules
 
-1. Every `<FILL: ...>` placeholder must be replaced with real content before `ExitPlanMode`. No `<FILL>` survives in the final plan.
+1. Every `<FILL: ...>` placeholder must be replaced with real content before the Phase 1.5 landing commit. No `<FILL>` survives in the final plan — the pre-execution gate (`assert_no_placeholders`) will refuse to launch Stage 1 otherwise.
 2. `<FILL-OR-DELETE: ...>` blocks — fill if you have content; delete the entire block if you don't. The planner decides, not the user:
    - `## Alternatives considered`: fill if you genuinely considered >1 stage decomposition; delete otherwise.
    - `## Open questions`: fill if items couldn't be resolved from the codebase; delete if fully determined. Runtime surprises are already handled by hand-off "STOP and report" + reviewer gate.

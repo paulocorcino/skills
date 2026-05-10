@@ -576,6 +576,11 @@ def main() -> int:
         ),
     )
     p.add_argument("--force", action="store_true", help="overwrite --output if it exists (DESTRUCTIVE)")
+    p.add_argument(
+        "--allow-outside-repo",
+        action="store_true",
+        help="ESCAPE HATCH: permit --output outside any git repo (only for genuine no-repo planning sessions; never use for repo work).",
+    )
     args = p.parse_args()
 
     if len(args.stage) < 1:
@@ -590,7 +595,38 @@ def main() -> int:
         )
         return 2
 
-    out = Path(args.output)
+    out = Path(args.output).resolve()
+
+    # Location guard: plans for repo work MUST live in <repo-root>/docs/plans/.
+    # Phase 1.5 (Plan landing commit) depends on this — a plan written outside
+    # the repo cannot be vendored, gitignore-narrowed, or committed.
+    repo_root = None
+    for ancestor in [out.parent, *out.parent.parents]:
+        if (ancestor / ".git").exists():
+            repo_root = ancestor
+            break
+    if repo_root is None:
+        if not args.allow_outside_repo:
+            print(
+                f"error: --output ({out}) is not inside a git repo. Staged plans "
+                "for repo work MUST be created at <repo-root>/docs/plans/<slug>.md. "
+                "Re-invoke from inside the target repo, or pass --allow-outside-repo "
+                "for the rare no-repo planning fallback.",
+                file=sys.stderr,
+            )
+            return 4
+    else:
+        expected_dir = (repo_root / "docs" / "plans").resolve()
+        if out.parent != expected_dir:
+            print(
+                f"error: --output parent must be {expected_dir} "
+                f"(got {out.parent}). Phase 1.5 (Plan landing commit) requires "
+                "the plan to live at <repo-root>/docs/plans/<slug>.md so the "
+                "vendored _verify.py and verify scripts land alongside it.",
+                file=sys.stderr,
+            )
+            return 4
+
     if out.exists() and not args.force:
         print(
             f"error: {out} already exists. Refusing to overwrite. "
