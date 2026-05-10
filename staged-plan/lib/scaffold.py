@@ -43,7 +43,9 @@ Staged subagent execution (prompt chaining + gate checks). Do NOT run as one lin
    python3 -c "import sys; sys.path.insert(0,'docs/plans'); from _verify import V; V.assert_no_placeholders('docs/plans/{slug}.md'); sys.exit(V.summarize())"
    ```
    If non-zero, abort and surface the offending lines. Fix or delete the flagged blocks; do NOT bypass.
-1. Read this plan end-to-end.
+1. **Parent** reads this plan end-to-end (orchestration needs the full picture).
+   **Subagents** read only the sections their hand-off prompt names — never
+   other stages' blocks. This split is a deliberate token optimization.
 2. Run Stage 0 (Pre-flight). If any gate is red on the baseline, abort.
 3. For each Stage N >= 1, launch a fresh subagent (see `## Executor adapter`):
    - prompt: the verbatim Hand-off prompt block for that stage
@@ -327,8 +329,11 @@ REPORT_TEMPLATE_CONTENT = """\
 
 _HANDOFF_HEADER = """**Hand-off prompt for Stage {n}:**
 > You are executing Stage {n} of <FILL: plan title> at <FILL: absolute plan path>.
-> Read that plan file end-to-end once for context, then read <repo>/CLAUDE.md for repo-wide rules.
-> Your authoritative spec is the block between `<!-- BEGIN STAGE {n} -->` and `<!-- END STAGE {n} -->`.
+> From that plan file, read ONLY: (a) `## Execution model`, (b) `## Execution policy`,
+> (c) `## Hand-off conventions`, (d) `## Global conventions`, (e) `## Critical files`,
+> and (f) your own stage block between `<!-- BEGIN STAGE {n} -->` and `<!-- END STAGE {n} -->`.
+> Do NOT read other stages' blocks — they are not your context. Then read
+> <repo>/CLAUDE.md for repo-wide rules. Your authoritative spec is the stage block.
 >
 > Repo root: <FILL: absolute path>
 > Branch: <FILL: branch>
