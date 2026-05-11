@@ -50,7 +50,7 @@ Staged subagent execution (prompt chaining + gate checks). Do NOT run as one lin
 3. For each Stage N >= 1, launch a fresh subagent (see `## Executor adapter`):
    - prompt: the verbatim Hand-off prompt block for that stage
    - description: the stage title
-   - foreground, sequential, inherit model
+   - foreground, sequential, `model` selected per Tier/Effort (see `## Executor adapter` mapping table)
 4. On return, verify: build + gates clean, commit SHA present in `git log`,
    post-stage report written, scope respected (only declared files touched).
 5. Green -> Mode handling:
@@ -167,6 +167,23 @@ mechanism exists).
 those to its own model lineup, picking the cheapest viable combo. The plan
 itself names no model — only the executor knows what's available and what it
 costs.
+
+**Mapping for Claude Code** (pass as `model` argument to the `Agent` tool):
+
+| Tier / Effort | `model` |
+|---|---|
+| mechanical / minimal | `haiku` |
+| mechanical / standard | `haiku` |
+| standard / minimal | `sonnet` |
+| standard / standard | `sonnet` |
+| standard / extended | `sonnet` or `opus` |
+| judgment / standard | `opus` |
+| judgment / extended | `opus` |
+| critical / * | `opus` |
+
+Do NOT omit `model` (omission inherits the parent's model and defeats the
+cost-tiering — every stage would silently run on the parent's model). For
+Codex / other executors, apply the same vocabulary against their lineup.
 
 Roles when no stage-level override is present:
 - Parent / orchestrator: `standard / standard`
@@ -366,52 +383,30 @@ def _handoff_header(n: int) -> str:
 _HANDOFF_BODY_PRELUDE = """
 > Your scope: Stage {n} only - <FILL: title>. Items: <FILL: IDs>.
 >
-> Critical rules (from CLAUDE.md):
-> - Build check: <FILL: cmd>
-> - Other gates: <FILL: list>
-> - Invariants: <FILL: list>
+> Spec is your stage block (Files, Order of operations, Verification, Report
+> path). Gates/invariants/commit style: `## Global conventions`. Working-tree
+> policy: `## Execution policy`. Authorization/scope/failure/return-to-parent:
+> `## Hand-off conventions`.
 >
-> Working tree: per `## Execution policy` working-tree policy = `<FILL: policy>`.
-> - clean-required / stash-authorized: tree is clean at stage start; stage only
->   files YOU modify, by explicit path; never `git add -A`.
-> - integrate-existing: pre-existing dirty files listed in the Stage 0 baseline
->   summary MAY be part of your declared file list; if so, stage them; otherwise
->   leave them untouched.
->
-> Files to modify:
-> 1. `<FILL: path>` - <FILL: intent>
->
-> Order of operations:
-> 1. <FILL>
 """
 
 _HANDOFF_LAST_STEP_COMMITTED = """\
-> N. Gates pass -> write the post-stage report (copy `docs/plans/_report-template.md`
->    as a starting point; leave the `Commit:` slot as `_filled by parent_` —
->    the parent fills it in the End-to-end summary table)
->    -> stage code files AND the report file together by explicit path
->    -> commit with HEREDOC including the
->    `Co-Authored-By: $EXECUTOR_NAME $EXECUTOR_EMAIL` trailer.
->    (One commit per stage; report is part of that commit.)
+> Commit step: after gates pass, copy `docs/plans/_report-template.md` to the
+> report path declared in your stage block (leave the `Commit:` slot as
+> `_filled by parent_`), then stage code files AND the report together by
+> explicit path and commit with the
+> `Co-Authored-By: $EXECUTOR_NAME $EXECUTOR_EMAIL` trailer. One commit per stage.
 """
 
 _HANDOFF_LAST_STEP_GITIGNORED = """\
-> N. Gates pass -> write the post-stage report locally to
->    `docs/plans/{slug}-stage-{n}-report.md` (copy `docs/plans/_report-template.md`
->    as a starting point; leave the `Commit:` slot as `_filled by parent_` —
->    the parent fills it in the End-to-end summary table)
->    -> stage **only** the code files by explicit path (the report file is
->    gitignored and must NOT be staged)
->    -> commit with HEREDOC including the
->    `Co-Authored-By: $EXECUTOR_NAME $EXECUTOR_EMAIL` trailer.
->    (One commit per stage; report is local-only, not part of any commit.)
+> Commit step: after gates pass, copy `docs/plans/_report-template.md` to
+> `docs/plans/{slug}-stage-{n}-report.md` (leave the `Commit:` slot as
+> `_filled by parent_`), then stage ONLY the code files by explicit path (the
+> report is gitignored and MUST NOT be staged) and commit with the
+> `Co-Authored-By: $EXECUTOR_NAME $EXECUTOR_EMAIL` trailer. One commit per stage.
 """
 
 _HANDOFF_BODY_TAIL = """\
->
-> Conventions: see `## Hand-off conventions` in this plan — it covers
-> Authorization, Scope discipline, Failure protocol, and Return-to-parent
-> format. They apply to this stage.
 >
 > Begin now.
 """
@@ -454,21 +449,28 @@ def render_stage(n: int, title: str, slug: str, report_policy: str) -> str:
 
     return f"""<!-- BEGIN STAGE {n} -->
 ## Stage {n} - {title}
+<!-- STAGE {n}: tier-effort -->
 **Tier:** standard         <!-- mechanical | standard | judgment | critical — see § Resource selection vocabulary -->
 **Effort:** standard       <!-- minimal | standard | extended -->
+<!-- STAGE {n}: tier-rationale -->
 **Tier rationale:** <FILL: 1-2 lines justifying this Tier/Effort. If the stage is mechanical apply-pattern work, say so; if judgment, name the specific decision the executor must make. The executor uses this to choose the cheapest viable model.>
+<!-- STAGE {n}: items -->
 **Items:** <FILL: atomic IDs>
+<!-- STAGE {n}: scope -->
 **Scope:** <FILL: one sentence>
 **Scope discipline:** stay within the declared file list; if the stage requires
 touching files outside it, STOP and report instead of silently expanding.
 
+<!-- STAGE {n}: files -->
 **Files:**
 - `<FILL: path>` - <FILL: what changes and why>
 
+<!-- STAGE {n}: order -->
 **Order of operations:**
 1. <FILL>
 {order_last}
 
+<!-- STAGE {n}: verification -->
 **Verification:** <FILL: per-stage commands + expected outcomes>
 <Generate `docs/plans/{slug}-verify-stage-{n}.py` when ANY of:
   - ≥4 distinct shell commands in this Verification block
@@ -477,10 +479,13 @@ touching files outside it, STOP and report instead of silently expanding.
 When in doubt, generate the script — it costs ~20 lines and survives retries.
 Otherwise keep gates inline.>
 
+<!-- STAGE {n}: manual -->
 **Manual verification (if any):** <FILL or "none">
 
+<!-- STAGE {n}: report -->
 {report_block}
 
+<!-- STAGE {n}: handoff -->
 {_handoff_header(n)}{render_handoff_body(n, slug, report_policy)}
 <!-- END STAGE {n} -->
 ---
@@ -544,7 +549,14 @@ the decomposition is suspect — too many stages classified as judgment/critical
 defeats the cost-savings purpose. -->
 """)
 
-    return "\n".join(parts)
+    rendered = "\n".join(parts)
+    # Substitute literal '<repo>' with the absolute repo root when known.
+    # When None (--allow-outside-repo with no repo found), leave '<repo>' in
+    # place so the planner fills it; do NOT crash here.
+    repo_root = getattr(args, "repo_root", None)
+    if repo_root:
+        rendered = rendered.replace("<repo>", repo_root)
+    return rendered
 
 
 def main() -> int:
@@ -575,6 +587,17 @@ def main() -> int:
         ),
     )
     p.add_argument("--force", action="store_true", help="overwrite --output if it exists (DESTRUCTIVE)")
+    p.add_argument(
+        "--repo-root",
+        default=None,
+        help=(
+            "Absolute repo root path. Substituted for the literal string '<repo>' "
+            "in the rendered plan (boilerplate paths like '<repo>/docs/plans/...'). "
+            "Auto-detected from --output's containing git repo when omitted; if no "
+            "repo is found and --allow-outside-repo is set, '<repo>' is left as a "
+            "FILL placeholder for the planner to substitute."
+        ),
+    )
     p.add_argument(
         "--allow-outside-repo",
         action="store_true",
@@ -625,6 +648,11 @@ def main() -> int:
                 file=sys.stderr,
             )
             return 4
+
+    # Resolve repo_root for <repo> substitution: explicit --repo-root wins;
+    # otherwise use the auto-detected one (None when --allow-outside-repo).
+    if args.repo_root is None and repo_root is not None:
+        args.repo_root = str(repo_root)
 
     if out.exists() and not args.force:
         print(

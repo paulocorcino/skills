@@ -44,7 +44,7 @@ If this exits non-zero, **abort and surface the offending lines** to the user â€
 
 ### 1. Launch each stage per `## Executor adapter` in the plan
 
-- Claude Code: `Agent` tool, `subagent_type: general-purpose`, `model` omitted, `run_in_background` omitted, `description` = stage title, `prompt` = the Hand-off prompt (optionally appended with runtime context such as current branch state).
+- Claude Code: `Agent` tool, `subagent_type: general-purpose`, `model` selected per the Tier/Effort mapping in the plan's `## Executor adapter` (do NOT omit â€” omission inherits the parent's model and silently bypasses cost-tiering), `run_in_background` omitted, `description` = stage title, `prompt` = the Hand-off prompt (optionally appended with runtime context such as current branch state).
 - Other executors: follow the adapter section.
 
 ### 2. On completion, verify green

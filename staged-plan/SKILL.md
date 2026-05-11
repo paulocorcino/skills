@@ -47,9 +47,18 @@ Detailed Phase 1.5 + Phase 2 mechanics: see `references/execution.md`.
 
 **Symbol-fallout scan (mandatory when the plan removes, renames, or changes the signature of any exported symbol):** for each such symbol, run `grep -rn '<symbol>' <repo>` (or equivalent). Every hit outside the file declaring the symbol is a call-site that MUST appear in the scope of some stage — either patched, or explicitly deferred with a `// TODO(slice-N)` shim. If you cannot enumerate the call-sites at plan time, the decomposition is incomplete; do not scaffold yet. The backlog specifies *intent*, not *fallout* — back it with an explicit grep.
 
-After investigation, decide the defaults below (slug, title, stage list, working-tree policy, reviewer recommendation, report policy), then run `scaffold.py` (Bash) to write the plan file at `<repo-root>/docs/plans/<slug>.md`, and use `Edit` to replace each `<FILL: ...>` and resolve each `<FILL-OR-DELETE: ...>` block. Never hand-write the plan markdown — the scaffold renders ~60% of the boilerplate deterministically and is the only path that respects the location guard.
+After investigation, decide the defaults below (slug, title, stage list, working-tree policy, reviewer recommendation, report policy). Then **stop and gate** before any file write (see *Pre-scaffold approval gate* below). On approval, run `scaffold.py` (Bash) to write the plan file at `<repo-root>/docs/plans/<slug>.md`, and use `Edit` to replace each `<FILL: ...>` and resolve each `<FILL-OR-DELETE: ...>` block. Never hand-write the plan markdown — the scaffold renders ~60% of the boilerplate deterministically and is the only path that respects the location guard.
 
-> **Plan-mode footnote.** If you are inside plan mode when invoked, do the investigation there (read-only is fine), then call `ExitPlanMode` with a short summary of the plan you intend to materialize before running `scaffold.py` — plan mode blocks file writes, so scaffold cannot run inside it. Do NOT use `ExitPlanMode` to dump a hand-written plan markdown; that's what scaffold is for. If you are not in plan mode, ignore this note.
+### Pre-scaffold approval gate (mandatory, both modes)
+
+Phase 1 investigation is **read-only by contract**. No `Write`, `Edit`, `scaffold.py`, or any file-creating Bash until the user has explicitly approved the materialization. This in-skill gate exists so the skill behaves the same whether or not the harness's plan mode is active — it does not rely on plan mode to prevent premature writes.
+
+When investigation is complete, present a short summary (slug, title, stage list, mode, working-tree, reviewer + reason, report-policy) and request approval. **Pick exactly one gate based on context — never call both:**
+
+- **Inside plan mode** (detection: the `ExitPlanMode` tool is available in your tool list): call `ExitPlanMode` with the summary. The harness's approval doubles as the gate. On approval, plan mode exits and `scaffold.py` can run. Do NOT dump a hand-written plan markdown into `ExitPlanMode` — the summary is a few lines; scaffold renders the full plan. Do NOT additionally call `AskUserQuestion` — that is double-prompting.
+- **Outside plan mode** (detection: `ExitPlanMode` is NOT in your tool list): call `AskUserQuestion` with the summary and options `[scaffold / adjust / cancel]`. On `scaffold`, proceed; on `adjust`, revise and re-gate; on `cancel`, stop. Do NOT skip this step "because the plan looks obvious" — the gate is the user's only checkpoint before the landing commit.
+
+The rule is identical in both cases: **no file writes in Phase 1 until the user says go.**
 
 ### Fixed defaults — do NOT prompt the user for these
 
@@ -81,7 +90,7 @@ The `Tier rationale:` line is mandatory — 1-2 lines naming the specific decisi
 
 ### Auto-recommend reviewer gate
 
-Decide the recommendation during Phase 1a investigation; pass it to `scaffold.py` via `--reviewer` (and `--reviewer-reason` if non-`none`). Surface the reason in the Phase 1a `ExitPlanMode` summary so the user can override before materialization.
+Decide the recommendation during Phase 1a investigation; pass it to `scaffold.py` via `--reviewer` (and `--reviewer-reason` if non-`none`). Surface the reason in the pre-scaffold approval summary (`ExitPlanMode` or `AskUserQuestion`, per Phase 1) so the user can override before materialization.
 
 - `reviewer: deep` — recommended when ≥2 of: ≥5 stages, public/cross-repo contract change, Docker/CI changes, auth or data migration, multi-repo touch.
 - `reviewer: light` — recommended when exactly 1 of those signals is present.
@@ -139,6 +148,8 @@ Flags:
 1. Every `<FILL: ...>` placeholder must be replaced with real content before the Phase 1.5 landing commit. No `<FILL>` survives in the final plan — the pre-execution gate (`assert_no_placeholders`) will refuse to launch Stage 1 otherwise.
 2. `<FILL-OR-DELETE: ...>` blocks — fill if you have content; delete the entire block if you don't. The planner decides, not the user:
    - `## Alternatives considered`: fill if you genuinely considered >1 stage decomposition; delete otherwise.
+3. **`<repo>` is already substituted** by `scaffold.py` to the absolute repo root (auto-detected from `--output`, or explicit via `--repo-root`). It is NOT a `<FILL>` to resolve. If you see literal `<repo>` survive in the rendered plan, you ran with `--allow-outside-repo` and must substitute manually before the landing commit.
+4. **Edit anchors per stage:** each FILL-bearing block in a stage carries an HTML comment like `<!-- STAGE 3: files -->` immediately above it. Use that marker (plus the FILL line) as the `old_string` in `Edit` calls — it makes the match unique without needing large surrounding context, and it scales when you have 6+ stages with structurally identical blocks.
 
 The scaffold is a starting point — modify freely. Do NOT re-run scaffold after editing; it will overwrite your work.
 
@@ -159,7 +170,7 @@ Plan file: [<plan-slug>.md](/absolute/path/to/docs/plans/<plan-slug>.md#L1)
 
 ## Phase 1.5 — Plan landing commit
 
-After `ExitPlanMode`, the **planner** (not a subagent) makes a single commit landing the plan + `_verify.py` + any verify scripts + the `.gitignore` rule for `docs/plans/logs/` (and `docs/plans/*-report.md` if report-policy is `gitignored`). Pre-check `.gitignore` first — full procedure in `references/execution.md`.
+After the pre-scaffold approval gate clears (either `ExitPlanMode` or `AskUserQuestion`, per Phase 1), the **planner** (not a subagent) makes a single commit landing the plan + `_verify.py` + any verify scripts + the `.gitignore` rule for `docs/plans/logs/` (and `docs/plans/*-report.md` if report-policy is `gitignored`). Pre-check `.gitignore` first — full procedure in `references/execution.md`.
 
 After the landing commit, working tree is clean and Phase 2 starts.
 
