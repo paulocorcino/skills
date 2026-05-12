@@ -78,13 +78,12 @@ Flags: `--cwd PATH`, `--language {python|go|rust|bunjs}`, `--only KEY,KEY`,
 
 ## References
 
-Forward links to detailed docs (filled by Stage 7):
+Detailed documentation on using and extending Quality Gate:
 
-- `references/architecture.md` — module/contract overview.
-- `references/language-pack-contract.md` — how to add a language.
-- `references/ratchet-rules.md` — full rule table with examples.
-- `references/report-format.md` — schema for `report.md`.
-- `references/configuration.md` — `.quality-gate/config.json` options.
+- [Bootstrap](references/bootstrap.md) — getting started with `init`, baseline capture, and updates.
+- [Missing tools](references/missing-tools.md) — handling missing or unavailable tools, exit codes, and tool-loss safeguards.
+- [Monorepo configuration](references/monorepo.md) — autodetect heuristic, per-project baselines, and config.json.
+- [Adding a language pack](references/adding-language.md) — contract, schema, and step-by-step guide for new languages.
 
 ## Layout
 
