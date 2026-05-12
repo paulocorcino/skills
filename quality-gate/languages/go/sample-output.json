@@ -1,0 +1,46 @@
+{
+  "coverage": {
+    "branch_pct": null,
+    "line_pct": 78.50
+  },
+  "duplication": {
+    "pct": 1.23
+  },
+  "files": {
+    "cmd/main.go": {
+      "complexity": 3.0,
+      "loc": 42,
+      "violations": 0
+    },
+    "internal/handler/handler.go": {
+      "complexity": 8.0,
+      "loc": 210,
+      "violations": 2
+    },
+    "internal/store/store.go": {
+      "complexity": 5.0,
+      "loc": 135,
+      "violations": 1
+    }
+  },
+  "language": "go",
+  "root": "/path/to/project",
+  "tools_missing": [],
+  "tools_used": [
+    "go",
+    "gocyclo",
+    "golangci-lint",
+    "jscpd"
+  ],
+  "violations": {
+    "errors": 1,
+    "info": 0,
+    "warnings": 2
+  },
+  "vulnerabilities": {
+    "critical": 0,
+    "high": 0,
+    "low": 0,
+    "medium": 0
+  }
+}

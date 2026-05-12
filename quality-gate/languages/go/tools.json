@@ -1,8 +1,32 @@
 {
   "tools": [
-    {"name": "go",            "purpose": "test + coverage", "detect_command": "go version",            "install_command": "", "docs_url": "https://go.dev/"},
-    {"name": "golangci-lint", "purpose": "lint",            "detect_command": "golangci-lint version",  "install_command": "", "docs_url": "https://golangci-lint.run/"},
-    {"name": "gosec",         "purpose": "security lint",   "detect_command": "gosec -version",         "install_command": "", "docs_url": "https://github.com/securego/gosec"},
-    {"name": "jscpd",         "purpose": "duplication",     "detect_command": "jscpd --version",        "install_command": "", "docs_url": "https://github.com/kucherenko/jscpd"}
+    {
+      "name": "go",
+      "purpose": "test + coverage (go test -coverprofile + go tool cover -func)",
+      "detect_command": "go version",
+      "install_command": "https://go.dev/dl/",
+      "docs_url": "https://go.dev/"
+    },
+    {
+      "name": "golangci-lint",
+      "purpose": "lint (aggregates errcheck, govet, staticcheck, unused, gocyclo, and more)",
+      "detect_command": "golangci-lint version",
+      "install_command": "go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest",
+      "docs_url": "https://golangci-lint.run/"
+    },
+    {
+      "name": "gocyclo",
+      "purpose": "cyclomatic complexity per function (max per file)",
+      "detect_command": "gocyclo -version",
+      "install_command": "go install github.com/fzipp/gocyclo/cmd/gocyclo@latest",
+      "docs_url": "https://github.com/fzipp/gocyclo"
+    },
+    {
+      "name": "jscpd",
+      "purpose": "duplication percentage",
+      "detect_command": "jscpd --version",
+      "install_command": "npm install -g jscpd",
+      "docs_url": "https://github.com/kucherenko/jscpd"
+    }
   ]
 }
