@@ -1,0 +1,48 @@
+{
+  "coverage": {
+    "branch_pct": 72.45,
+    "line_pct": 85.30
+  },
+  "duplication": {
+    "pct": 3.12
+  },
+  "files": {
+    "src/app.py": {
+      "complexity": 4.5,
+      "loc": 120,
+      "violations": 2
+    },
+    "src/utils.py": {
+      "complexity": 2.0,
+      "loc": 45,
+      "violations": 0
+    },
+    "tests/test_app.py": {
+      "complexity": 1.0,
+      "loc": 60,
+      "violations": 0
+    }
+  },
+  "language": "python",
+  "root": "/path/to/project",
+  "tools_missing": [],
+  "tools_used": [
+    "bandit",
+    "coverage",
+    "jscpd",
+    "pytest",
+    "radon",
+    "ruff"
+  ],
+  "violations": {
+    "errors": 1,
+    "info": 0,
+    "warnings": 3
+  },
+  "vulnerabilities": {
+    "critical": 0,
+    "high": 0,
+    "low": 1,
+    "medium": 1
+  }
+}

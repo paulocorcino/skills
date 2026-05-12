@@ -1,10 +1,46 @@
 {
   "tools": [
-    {"name": "ruff",        "purpose": "lint",          "detect_command": "ruff --version",        "install_command": "", "docs_url": "https://docs.astral.sh/ruff/"},
-    {"name": "pytest",      "purpose": "test runner",   "detect_command": "pytest --version",      "install_command": "", "docs_url": "https://docs.pytest.org/"},
-    {"name": "coverage",    "purpose": "coverage",      "detect_command": "coverage --version",    "install_command": "", "docs_url": "https://coverage.readthedocs.io/"},
-    {"name": "bandit",      "purpose": "security lint", "detect_command": "bandit --version",      "install_command": "", "docs_url": "https://bandit.readthedocs.io/"},
-    {"name": "radon",       "purpose": "complexity",    "detect_command": "radon --version",       "install_command": "", "docs_url": "https://radon.readthedocs.io/"},
-    {"name": "jscpd",       "purpose": "duplication",   "detect_command": "jscpd --version",       "install_command": "", "docs_url": "https://github.com/kucherenko/jscpd"}
+    {
+      "name": "ruff",
+      "purpose": "lint — fast Python linter (errors, warnings, info)",
+      "detect_command": "ruff --version",
+      "install_command": "pip install ruff",
+      "docs_url": "https://docs.astral.sh/ruff/"
+    },
+    {
+      "name": "pytest",
+      "purpose": "test runner",
+      "detect_command": "pytest --version",
+      "install_command": "pip install pytest pytest-cov",
+      "docs_url": "https://docs.pytest.org/"
+    },
+    {
+      "name": "coverage",
+      "purpose": "coverage measurement (line + branch)",
+      "detect_command": "coverage --version",
+      "install_command": "pip install coverage[toml]",
+      "docs_url": "https://coverage.readthedocs.io/"
+    },
+    {
+      "name": "bandit",
+      "purpose": "security lint — static analysis for common security issues",
+      "detect_command": "bandit --version",
+      "install_command": "pip install bandit",
+      "docs_url": "https://bandit.readthedocs.io/"
+    },
+    {
+      "name": "radon",
+      "purpose": "complexity — cyclomatic complexity per function/file",
+      "detect_command": "radon --version",
+      "install_command": "pip install radon",
+      "docs_url": "https://radon.readthedocs.io/"
+    },
+    {
+      "name": "jscpd",
+      "purpose": "duplication — copy-paste detection across source files",
+      "detect_command": "jscpd --version",
+      "install_command": "npm install -g jscpd",
+      "docs_url": "https://github.com/kucherenko/jscpd"
+    }
   ]
 }
