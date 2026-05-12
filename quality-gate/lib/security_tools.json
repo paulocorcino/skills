@@ -1,0 +1,16 @@
+[
+  {
+    "name": "osv-scanner",
+    "purpose": "Scan project dependencies for known vulnerabilities using the OSV database",
+    "detect_command": "osv-scanner --version",
+    "install_command": "go install github.com/google/osv-scanner/v2/cmd/osv-scanner@latest",
+    "docs_url": "https://google.github.io/osv-scanner/"
+  },
+  {
+    "name": "semgrep",
+    "purpose": "Static analysis (SAST) across all languages using community rulesets",
+    "detect_command": "semgrep --version",
+    "install_command": "pipx install semgrep",
+    "docs_url": "https://semgrep.dev/docs/"
+  }
+]

@@ -1,0 +1,14 @@
+{
+  "vulnerabilities": {
+    "critical": 0,
+    "high": 1,
+    "medium": 3,
+    "low": 2
+  },
+  "violations_security": {
+    "errors": 0,
+    "warnings": 4
+  },
+  "tools_used": ["osv-scanner", "semgrep"],
+  "tools_missing": []
+}
