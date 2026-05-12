@@ -78,7 +78,7 @@ Build passed, gates clean, commit SHA in `git log`, post-stage report written, s
 ### 4. After the final stage
 
 - Run the end-to-end verification block.
-- If `Reviewer: light` or `deep`, run the reviewer gate. On `fail` / `blocked`, stop and surface; do NOT replan automatically.
+- If `Reviewer: light` or `deep`, run the reviewer gate exactly as the plan describes it (reviewer -> arbiter -> fix round -> conditional re-review -> persist to `docs/plans/reports/<plan-slug>_reviewer_<seq>.md`). On `fail` / `blocked`, stop and surface the md file path; do NOT replan automatically and do NOT trigger another fix round.
 - Emit the stage -> commit SHA -> status -> report-path table.
 - List any externally-blocked items still open, with reopen criteria.
 - If working-tree policy was `stash-authorized`, remind the user to `git stash pop` (or list the stash ref).

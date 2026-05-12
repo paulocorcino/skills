@@ -156,16 +156,23 @@ canonical source for the `stage → SHA` mapping.
 ---
 
 ## Reviewer gate (only if Reviewer != none)
-After the final stage commits green:
-- reviewer: light -> small subagent validates scope, diff vs. plan, gate
-  results, post-stage reports, and obvious risk. Does NOT replan.
-- reviewer: deep -> same plus security/perf/maintainability lens for
-  stack-relevant best practices.
-Reviewer returns one of: `pass`, `pass-with-notes`, `fail`, `blocked`.
-Reviewer never edits code and never replans. On `fail`/`blocked`, stop and
-surface to the user.
-If a `reviewer` skill is available in the executor, prefer it; otherwise use
-an inline QA prompt that takes the plan + diff range as input.
+After the final stage commits green, the reviewer runs and emits a verdict
+plus a findings list. If findings exist, an **arbiter** classifies them
+(`must-fix` / `nice-to-have` / `human-judgment`) using a fixed decision
+tree, a **fix-subagent** corrects only the `must-fix` items (max 1 round),
+gates are re-run, and (conditionally) a re-review runs. The full outcome
+is persisted to `docs/plans/reports/<plan-slug>_reviewer_<seq>.md` --
+immutable per sequence, never overwritten.
+
+Final verdict is one of:
+`pass | pass-with-notes | pass-with-fixes | pass-with-pending | fail | blocked`
+
+Neither the reviewer nor the arbiter edits code or replans. On
+`fail`/`blocked`, the parent stops and surfaces the md file path. The
+full sequence (arbiter prompt, fix-round rules, re-review trigger,
+output file structure) is rendered into every plan whose
+`Reviewer != none` -- see the `## Reviewer gate` block in the generated
+plan for the operational contract.
 
 ## Critical files (cross-stage index)
 <table of file -> stages that touch it>

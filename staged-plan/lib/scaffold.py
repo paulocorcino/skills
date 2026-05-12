@@ -286,11 +286,85 @@ After the final stage commits green:
   results, post-stage reports, and obvious risk. Does NOT replan.
 - reviewer: deep -> same plus security/perf/maintainability lens for
   stack-relevant best practices.
-Reviewer returns one of: `pass`, `pass-with-notes`, `fail`, `blocked`.
-Reviewer never edits code and never replans. On `fail`/`blocked`, stop and
-surface to the user.
+
+Reviewer returns a verdict in
+`pass | pass-with-notes | fail | blocked`
+plus a findings list (each: `file:line`, severity, description).
+Reviewer never edits code and never replans.
 If a `reviewer` skill is available in the executor, prefer it; otherwise use
 an inline QA prompt that takes the plan + diff range as input.
+
+### Arbiter (run only if findings list is non-empty)
+**Tier:** critical / **Effort:** focused
+Reads the reviewer verdict + findings + diff range. For each finding,
+applies this decision tree verbatim:
+
+1. Is this a real defect? (correctness, security, contract, data integrity)
+   - No  -> classify `nice-to-have`.
+   - Yes -> step 2.
+2. Is the fix mechanical (one obvious right answer, no design choice)
+   AND fully inside the plan's declared file list?
+   - Yes -> classify `must-fix`.
+   - No  -> classify `human-judgment`.
+
+Arbiter records both answers per finding in the output md (auditable).
+Arbiter does NOT edit code and does NOT replan.
+
+### Fix round (run only if any `must-fix` exists; HARD MAX = 1 round)
+**Tier:** standard / **Effort:** focused
+Fix-subagent receives only the `must-fix` items + their target files.
+- Applies fixes within those files only.
+- For each item: writes a `fix note` -- what changed, line(s), and one
+  sentence linking the change to the original finding.
+- If a `must-fix` proves to require out-of-scope work or a design choice,
+  reclassify it as `human-judgment` and skip it. Do NOT block sibling fixes.
+After the round: re-run every declared gate (build/lint/test/etc.). Gate
+failure does NOT trigger another fix round -- the failure goes into the
+pending list and the verdict degrades.
+
+### Re-review (conditional)
+Run a second reviewer pass (same level: light/deep) only if EITHER:
+- The plan's Tier was `critical`, OR
+- The fix round modified files outside the declared scope of the
+  originating `must-fix` finding (scope-creep signal).
+
+Any *new* finding from re-review goes straight to the pending list of the
+next sequence file. Re-review does NOT trigger another fix round.
+
+### Output file (always written when this gate runs)
+Path: `docs/plans/reports/<plan-slug>_reviewer_<seq>.md`
+- `<seq>` is a zero-padded 3-digit counter starting at `001`, incremented
+  for each run of this gate against the same plan.
+- Each sequence file is **immutable** once written. Re-runs produce a
+  new file, never overwrite.
+
+Top of file: final verdict in
+`pass | pass-with-notes | pass-with-fixes | pass-with-pending | fail | blocked`
+
+Body sections (in order):
+- `## Reviewer verdict` -- raw reviewer output, verbatim.
+- `## Arbiter classification` -- table per finding: `file:line`, severity,
+  class (must-fix / nice-to-have / human-judgment), decision-tree answers
+  (defect? yes/no -- mechanical+in-scope? yes/no), 1-line reason.
+- `## Fixes applied` -- one entry per `must-fix` corrected, with the fix
+  note (what changed, lines, link to finding).
+- `## Pending` -- every `human-judgment` finding + every `must-fix`
+  reclassified to `human-judgment` during the fix round + any new finding
+  from re-review. Each entry:
+  - `file:line`
+  - reviewer's original finding (short quote)
+  - arbiter's reason for human classification
+  - suggested action (may be "decide whether to address")
+
+Verdict mapping:
+- `pass` / `pass-with-notes` -- reviewer's original verdict, no findings
+  needed fixing.
+- `pass-with-fixes` -- all `must-fix` corrected, no pending items.
+- `pass-with-pending` -- corrections completed (or none needed), but
+  `Pending` section is non-empty.
+- `fail` / `blocked` -- reviewer's verdict was `fail`/`blocked`, OR gates
+  failed after the fix round. Parent stops the plan and surfaces the md
+  file path to the user.
 """
 
 HANDOFF_CONVENTIONS = """## Hand-off conventions (apply to every stage)
