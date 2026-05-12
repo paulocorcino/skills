@@ -1,0 +1,85 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://corcino.com.br/quality-gate/baseline.schema.json",
+  "title": "Quality Gate Baseline",
+  "description": "Schema for .quality-gate/baseline.json — the committed baseline snapshot the ratchet compares against.",
+  "type": "object",
+  "required": ["schema_version", "generated_at", "commit", "main_branch", "tools_versions", "projects"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"},
+    "generated_at": {"type": "string", "format": "date-time"},
+    "commit": {"type": "string", "pattern": "^[0-9a-f]{7,40}$"},
+    "main_branch": {"type": "string", "minLength": 1},
+    "tools_versions": {
+      "type": "object",
+      "additionalProperties": {"type": "string"}
+    },
+    "projects": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["language", "root", "metrics"],
+        "additionalProperties": false,
+        "properties": {
+          "language": {"type": "string", "enum": ["python", "go", "rust", "bunjs"]},
+          "root": {"type": "string"},
+          "metrics": {
+            "type": "object",
+            "required": ["coverage", "duplication", "violations", "vulnerabilities", "files"],
+            "additionalProperties": false,
+            "properties": {
+              "coverage": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "line_pct": {"type": ["number", "null"]},
+                  "branch_pct": {"type": ["number", "null"]}
+                }
+              },
+              "duplication": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "pct": {"type": ["number", "null"]}
+                }
+              },
+              "violations": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "errors": {"type": "integer", "minimum": 0},
+                  "warnings": {"type": "integer", "minimum": 0},
+                  "info": {"type": "integer", "minimum": 0}
+                }
+              },
+              "vulnerabilities": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "critical": {"type": "integer", "minimum": 0},
+                  "high": {"type": "integer", "minimum": 0},
+                  "medium": {"type": "integer", "minimum": 0},
+                  "low": {"type": "integer", "minimum": 0}
+                }
+              },
+              "files": {
+                "type": "object",
+                "description": "Per-file metric snapshot (path -> metrics). Baseline-listed files cannot grow worse.",
+                "additionalProperties": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "loc": {"type": "integer", "minimum": 0},
+                    "complexity": {"type": ["number", "null"]},
+                    "violations": {"type": "integer", "minimum": 0}
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

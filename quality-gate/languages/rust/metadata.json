@@ -1,0 +1,7 @@
+{
+  "language": "rust",
+  "manifests": ["Cargo.toml"],
+  "extensions": [".rs"],
+  "soft_limits": {"file_loc": 400},
+  "hard_limits": {"file_loc": 900}
+}

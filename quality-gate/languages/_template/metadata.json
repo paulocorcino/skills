@@ -1,0 +1,7 @@
+{
+  "language": "example",
+  "manifests": ["example.toml"],
+  "extensions": [".example"],
+  "soft_limits": {"file_loc": 300},
+  "hard_limits": {"file_loc": 800}
+}

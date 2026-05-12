@@ -1,0 +1,11 @@
+{
+  "tools": [
+    {
+      "name": "example-tool",
+      "purpose": "What this tool measures (coverage, lint, duplication, etc.)",
+      "detect_command": "example-tool --version",
+      "install_command": "pip install example-tool",
+      "docs_url": "https://example.com/tool"
+    }
+  ]
+}

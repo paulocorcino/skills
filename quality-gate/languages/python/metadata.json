@@ -1,0 +1,7 @@
+{
+  "language": "python",
+  "manifests": ["pyproject.toml", "setup.py", "requirements.txt"],
+  "extensions": [".py"],
+  "soft_limits": {"file_loc": 300},
+  "hard_limits": {"file_loc": 800}
+}

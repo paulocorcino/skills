@@ -1,0 +1,61 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://corcino.com.br/quality-gate/language_metrics.schema.json",
+  "title": "Quality Gate Language Metrics",
+  "description": "Canonical output schema every languages/<lang>/run.py must produce.",
+  "type": "object",
+  "required": ["language", "root", "tools_used", "tools_missing", "coverage", "duplication", "violations", "vulnerabilities", "files"],
+  "additionalProperties": false,
+  "properties": {
+    "language": {"type": "string", "enum": ["python", "go", "rust", "bunjs"]},
+    "root": {"type": "string"},
+    "tools_used": {"type": "array", "items": {"type": "string"}},
+    "tools_missing": {"type": "array", "items": {"type": "string"}},
+    "coverage": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "line_pct": {"type": ["number", "null"]},
+        "branch_pct": {"type": ["number", "null"]}
+      }
+    },
+    "duplication": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "pct": {"type": ["number", "null"]}
+      }
+    },
+    "violations": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "errors": {"type": "integer", "minimum": 0},
+        "warnings": {"type": "integer", "minimum": 0},
+        "info": {"type": "integer", "minimum": 0}
+      }
+    },
+    "vulnerabilities": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "critical": {"type": "integer", "minimum": 0},
+        "high": {"type": "integer", "minimum": 0},
+        "medium": {"type": "integer", "minimum": 0},
+        "low": {"type": "integer", "minimum": 0}
+      }
+    },
+    "files": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "loc": {"type": "integer", "minimum": 0},
+          "complexity": {"type": ["number", "null"]},
+          "violations": {"type": "integer", "minimum": 0}
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,39 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://corcino.com.br/quality-gate/config.schema.json",
+  "title": "Quality Gate Config",
+  "description": "Optional .quality-gate/config.json — explicit project list and per-language limit overrides.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["projects"],
+  "properties": {
+    "main_branch": {"type": "string", "default": "main"},
+    "projects": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["language", "root"],
+        "additionalProperties": false,
+        "properties": {
+          "language": {"type": "string", "enum": ["python", "go", "rust", "bunjs"]},
+          "root": {"type": "string"},
+          "project_key": {"type": "string"},
+          "soft_limits": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "file_loc": {"type": "integer", "minimum": 1}
+            }
+          },
+          "hard_limits": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "file_loc": {"type": "integer", "minimum": 1}
+            }
+          }
+        }
+      }
+    }
+  }
+}

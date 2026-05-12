@@ -1,0 +1,8 @@
+{
+  "tools": [
+    {"name": "cargo",     "purpose": "test runner",   "detect_command": "cargo --version",     "install_command": "", "docs_url": "https://doc.rust-lang.org/cargo/"},
+    {"name": "clippy",    "purpose": "lint",          "detect_command": "cargo clippy -V",     "install_command": "", "docs_url": "https://github.com/rust-lang/rust-clippy"},
+    {"name": "tarpaulin", "purpose": "coverage",      "detect_command": "cargo tarpaulin -V",  "install_command": "", "docs_url": "https://github.com/xd009642/tarpaulin"},
+    {"name": "jscpd",     "purpose": "duplication",   "detect_command": "jscpd --version",     "install_command": "", "docs_url": "https://github.com/kucherenko/jscpd"}
+  ]
+}

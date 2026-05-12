@@ -1,0 +1,7 @@
+{
+  "language": "bunjs",
+  "manifests": ["package.json", "bun.lockb"],
+  "extensions": [".ts", ".tsx", ".js", ".jsx"],
+  "soft_limits": {"file_loc": 300},
+  "hard_limits": {"file_loc": 800}
+}

@@ -10,11 +10,50 @@ SLUG = "quality-gate-skill"
 STAGE = 1
 SKILL_ROOT = "quality-gate"
 
-# Scope: only files under quality-gate/ may be touched.
-V.assert_only_files_touched(
-    allowed_globs=[f"{SKILL_ROOT}/**", f"docs/plans/{SLUG}-stage-{STAGE}-report.md"],
-    base_sha="HEAD~1",
-)
+# Declared file list for Stage 1 (matches the plan's Files block, plus the
+# stage report and the shim that wires `quality-gate/` -> `import quality_gate`).
+ALLOWED = [
+    f"{SKILL_ROOT}/SKILL.md",
+    f"{SKILL_ROOT}/__init__.py",
+    f"{SKILL_ROOT}/__main__.py",
+    f"{SKILL_ROOT}/cli.py",
+    f"{SKILL_ROOT}/schema/baseline.schema.json",
+    f"{SKILL_ROOT}/schema/language_metrics.schema.json",
+    f"{SKILL_ROOT}/schema/config.schema.json",
+    f"{SKILL_ROOT}/lib/__init__.py",
+    f"{SKILL_ROOT}/lib/detect.py",
+    f"{SKILL_ROOT}/lib/baseline_io.py",
+    f"{SKILL_ROOT}/lib/config.py",
+    f"{SKILL_ROOT}/lib/ratchet.py",
+    f"{SKILL_ROOT}/lib/report.py",
+    f"{SKILL_ROOT}/lib/triage.py",
+    f"{SKILL_ROOT}/lib/validate_language.py",
+    f"{SKILL_ROOT}/lib/security.py",
+    f"{SKILL_ROOT}/lib/backlog.py",
+    f"{SKILL_ROOT}/languages/__init__.py",
+    f"{SKILL_ROOT}/languages/_template/run.py",
+    f"{SKILL_ROOT}/languages/_template/tools.json",
+    f"{SKILL_ROOT}/languages/_template/metadata.json",
+    f"{SKILL_ROOT}/languages/python/run.py",
+    f"{SKILL_ROOT}/languages/python/tools.json",
+    f"{SKILL_ROOT}/languages/python/metadata.json",
+    f"{SKILL_ROOT}/languages/go/run.py",
+    f"{SKILL_ROOT}/languages/go/tools.json",
+    f"{SKILL_ROOT}/languages/go/metadata.json",
+    f"{SKILL_ROOT}/languages/rust/run.py",
+    f"{SKILL_ROOT}/languages/rust/tools.json",
+    f"{SKILL_ROOT}/languages/rust/metadata.json",
+    f"{SKILL_ROOT}/languages/bunjs/run.py",
+    f"{SKILL_ROOT}/languages/bunjs/tools.json",
+    f"{SKILL_ROOT}/languages/bunjs/metadata.json",
+    # Python-import shim (deviation; see report).
+    "quality_gate.py",
+    # The verify script itself was rewritten in this stage (deviation; see report).
+    f"docs/plans/{SLUG}-verify-stage-{STAGE}.py",
+    f"docs/plans/{SLUG}-stage-{STAGE}-report.md",
+]
+
+V.assert_only_files_touched(ALLOWED, base_sha="HEAD~1")
 
 # Package import.
 V.run_gate(
