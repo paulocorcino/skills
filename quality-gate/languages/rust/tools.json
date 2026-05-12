@@ -1,8 +1,30 @@
-{
-  "tools": [
-    {"name": "cargo",     "purpose": "test runner",   "detect_command": "cargo --version",     "install_command": "", "docs_url": "https://doc.rust-lang.org/cargo/"},
-    {"name": "clippy",    "purpose": "lint",          "detect_command": "cargo clippy -V",     "install_command": "", "docs_url": "https://github.com/rust-lang/rust-clippy"},
-    {"name": "tarpaulin", "purpose": "coverage",      "detect_command": "cargo tarpaulin -V",  "install_command": "", "docs_url": "https://github.com/xd009642/tarpaulin"},
-    {"name": "jscpd",     "purpose": "duplication",   "detect_command": "jscpd --version",     "install_command": "", "docs_url": "https://github.com/kucherenko/jscpd"}
-  ]
-}
+[
+  {
+    "name": "cargo",
+    "purpose": "Rust build system and package manager; required for all Rust sub-tools",
+    "detect_command": "cargo --version",
+    "install_command": "curl https://sh.rustup.rs -sSf | sh -s -- -y",
+    "docs_url": "https://doc.rust-lang.org/cargo/"
+  },
+  {
+    "name": "cargo-llvm-cov",
+    "purpose": "Line and branch coverage via LLVM instrumentation",
+    "detect_command": "cargo llvm-cov --version",
+    "install_command": "cargo install cargo-llvm-cov",
+    "docs_url": "https://github.com/taiki-e/cargo-llvm-cov"
+  },
+  {
+    "name": "clippy",
+    "purpose": "Lint and static analysis (errors + warnings mapped to violations)",
+    "detect_command": "cargo clippy --version",
+    "install_command": "rustup component add clippy",
+    "docs_url": "https://doc.rust-lang.org/clippy/"
+  },
+  {
+    "name": "jscpd",
+    "purpose": "Duplicate code detection across Rust source files",
+    "detect_command": "jscpd --version",
+    "install_command": "npm install -g jscpd",
+    "docs_url": "https://github.com/kucherenko/jscpd"
+  }
+]

@@ -1,0 +1,41 @@
+{
+  "coverage": {
+    "branch_pct": null,
+    "line_pct": 82.50
+  },
+  "duplication": {
+    "pct": 0.85
+  },
+  "files": {
+    "src/lib.rs": {
+      "complexity": null,
+      "loc": 420,
+      "violations": 2
+    },
+    "src/main.rs": {
+      "complexity": null,
+      "loc": 55,
+      "violations": 0
+    }
+  },
+  "language": "rust",
+  "root": "/path/to/project",
+  "tools_missing": [],
+  "tools_used": [
+    "cargo",
+    "cargo-llvm-cov",
+    "clippy",
+    "jscpd"
+  ],
+  "violations": {
+    "errors": 0,
+    "info": 1,
+    "warnings": 2
+  },
+  "vulnerabilities": {
+    "critical": 0,
+    "high": 0,
+    "low": 0,
+    "medium": 0
+  }
+}
