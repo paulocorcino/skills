@@ -1,10 +1,11 @@
 # ADR 0001 — Quality Gate skill: conceito e decisões de arquitetura
 
-- **Status:** Accepted
+- **Status:** Accepted — **parcialmente superseded por ADR 0002** (§3.1, §3.6, §3.7, §3.10 exit codes, §3.13 inviolable rules)
 - **Data:** 2026-05-12
 - **Decisores:** Paulo Corcino
 - **Contexto da decisão:** sessão `/grill-me` consolidada nesta branch
 - **Plano de implementação:** [`docs/plans/quality-gate-skill.md`](../plans/quality-gate-skill.md)
+- **Evolução:** ver [ADR 0002](0002-quality-gate-branch-intent.md) para o redesign de governança baseado em intent declarado por branch (v2)
 
 ---
 

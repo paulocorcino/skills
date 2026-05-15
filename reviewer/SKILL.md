@@ -1,9 +1,9 @@
 ---
-name: reviewer-v3
-description: Use ONLY when the user explicitly invokes /reviewer-v3 (literal slash command). Performs a native, findings-first review with a deterministic coverage audit run by the reviewer before emission (`scripts/fact_pack.py` + `scripts/audit.py`). Four subagent capabilities (defect-hunter, test-auditor, verifier, scout) are spawnable on judgment, not always-on. During validation this skill must NOT match generic "code review" requests; v1 (reviewer) and v2 (reviewer-v2) handle those.
+name: reviewer
+description: Use ONLY when the user explicitly invokes /reviewer (literal slash command). Performs a native, findings-first review with a deterministic coverage audit run by the reviewer before emission (`scripts/fact_pack.py` + `scripts/audit.py`). Four subagent capabilities (defect-hunter, test-auditor, verifier, scout) are spawnable on judgment, not always-on. During validation this skill must NOT match generic "code review" requests.
 ---
 
-# reviewer-v3
+# reviewer
 
 ## Soul
 

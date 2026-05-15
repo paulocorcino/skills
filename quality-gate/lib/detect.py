@@ -7,13 +7,61 @@ validation by `lib.config`) and detection is skipped.
 """
 from __future__ import annotations
 
+import json
 import os
+import re
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Optional
+
+try:
+    import tomllib  # py3.11+
+except ImportError:  # pragma: no cover
+    tomllib = None  # type: ignore
+
+
+def _read_project_name(root: Path, language: str) -> Optional[str]:
+    """Best-effort: extract a human project name from the manifest. None on any failure."""
+    try:
+        if language == "bunjs":
+            pkg = root / "package.json"
+            if pkg.is_file():
+                data = json.loads(pkg.read_text(encoding="utf-8"))
+                name = data.get("name")
+                if isinstance(name, str) and name.strip():
+                    return name.strip()
+        elif language == "python":
+            pyproject = root / "pyproject.toml"
+            if pyproject.is_file() and tomllib is not None:
+                data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+                name = (data.get("project", {}).get("name")
+                        or data.get("tool", {}).get("poetry", {}).get("name"))
+                if isinstance(name, str) and name.strip():
+                    return name.strip()
+        elif language == "rust":
+            cargo = root / "Cargo.toml"
+            if cargo.is_file() and tomllib is not None:
+                data = tomllib.loads(cargo.read_text(encoding="utf-8"))
+                name = data.get("package", {}).get("name")
+                if isinstance(name, str) and name.strip():
+                    return name.strip()
+        elif language == "go":
+            gomod = root / "go.mod"
+            if gomod.is_file():
+                for line in gomod.read_text(encoding="utf-8").splitlines():
+                    m = re.match(r"^\s*module\s+(\S+)", line)
+                    if m:
+                        module = m.group(1).strip()
+                        return module.rsplit("/", 1)[-1] or module
+    except Exception:
+        return None
+    return None
 
 # Manifest signature -> language. Order matters: more specific signatures first.
+# BunJS: bun.lockb (binary, Bun <1.1) listed before bun.lock (text, Bun >=1.1) so the
+# binary format wins when both exist, but text-only repos are still detected.
 _MANIFEST_SIGNATURES: list[tuple[str, tuple[str, ...]]] = [
     ("bunjs", ("package.json", "bun.lockb")),
+    ("bunjs", ("package.json", "bun.lock")),
     ("python", ("pyproject.toml",)),
     ("python", ("setup.py",)),
     ("python", ("requirements.txt",)),
@@ -51,7 +99,11 @@ def detect_projects(repo_root: str | os.PathLike) -> list[dict]:
                     continue
                 rel = here.relative_to(root)
                 key = "." if str(rel) == "." else str(rel).replace(os.sep, "/")
-                found.append({"language": language, "root": str(here), "project_key": key})
+                entry = {"language": language, "root": str(here), "project_key": key}
+                name = _read_project_name(here, language)
+                if name:
+                    entry["name"] = name
+                found.append(entry)
                 matched_roots.add(here)
                 break  # one language per dir
 
@@ -68,7 +120,11 @@ def detect_from_config(config: dict, repo_root: str | os.PathLike) -> list[dict]
         rel = entry["root"]
         abs_root = (root / rel).resolve() if not Path(rel).is_absolute() else Path(rel).resolve()
         key = entry.get("project_key") or (rel.replace(os.sep, "/") if rel else ".")
-        result.append({"language": lang, "root": str(abs_root), "project_key": key})
+        out = {"language": lang, "root": str(abs_root), "project_key": key}
+        name = entry.get("name") or entry.get("project_name") or _read_project_name(abs_root, lang)
+        if name:
+            out["name"] = name
+        result.append(out)
     result.sort(key=lambda p: (p["project_key"], p["language"]))
     return result
 

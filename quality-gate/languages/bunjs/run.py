@@ -47,8 +47,7 @@ def detect_tools(root: str) -> tuple[list[str], list[str]]:
     has_biome = bool(shutil.which("biome") or _bun_local(root, "biome"))
     if has_biome:
         used.append("biome")
-        # oxlint is not used when biome is present
-        missing.append("oxlint")
+        # oxlint is mutually exclusive with biome — not reported as missing
     else:
         missing.append("biome")
         has_oxlint = bool(shutil.which("oxlint") or _bun_local(root, "oxlint"))
@@ -121,10 +120,12 @@ def _run_coverage(root: str) -> tuple[float | None, float | None]:
 # ── violations — biome check --reporter=json ──────────────────────────────────
 
 
-def _run_biome(root: str) -> tuple[int, int, int, dict[str, int]]:
-    """Return (errors, warnings, info, per_file_violations) from biome."""
+def _run_biome(root: str) -> tuple[int, int, int, dict[str, int], dict[str, int], dict[str, dict[str, int]]]:
+    """Return (errors, warnings, info, per_file_violations, rule_counts, per_file_rule_counts) from biome."""
     errors = warnings = info = 0
     per_file: dict[str, int] = {}
+    rule_counts: dict[str, int] = {}
+    per_file_rules: dict[str, dict[str, int]] = {}
     try:
         biome_bin = _resolve_bin(root, "biome")
         result = subprocess.run(
@@ -137,7 +138,7 @@ def _run_biome(root: str) -> tuple[int, int, int, dict[str, int]]:
         if not raw:
             raw = result.stderr.decode("utf-8", errors="replace").strip()
         if not raw:
-            return errors, warnings, info, per_file
+            return errors, warnings, info, per_file, rule_counts, per_file_rules
         data = json.loads(raw)
         root_path = Path(root).resolve()
         diagnostics = data.get("diagnostics", [])
@@ -151,6 +152,10 @@ def _run_biome(root: str) -> tuple[int, int, int, dict[str, int]]:
                 info += 1
             else:
                 warnings += 1  # treat unknown as warning
+            # rule aggregation (biome diagnostic.category: "lint/style/useConst" etc.)
+            category = diag.get("category")
+            if isinstance(category, str) and category:
+                rule_counts[category] = rule_counts.get(category, 0) + 1
             # per-file accounting via location
             location = diag.get("location", {})
             path_str = location.get("path", {})
@@ -162,15 +167,20 @@ def _run_biome(root: str) -> tuple[int, int, int, dict[str, int]]:
                 except (ValueError, OSError):
                     rel = str(path_str)
                 per_file[rel] = per_file.get(rel, 0) + 1
+                if isinstance(category, str) and category:
+                    file_rules = per_file_rules.setdefault(rel, {})
+                    file_rules[category] = file_rules.get(category, 0) + 1
     except Exception:
         pass
-    return errors, warnings, info, per_file
+    return errors, warnings, info, per_file, rule_counts, per_file_rules
 
 
-def _run_oxlint(root: str) -> tuple[int, int, int, dict[str, int]]:
-    """Return (errors, warnings, info, per_file_violations) from oxlint JSON output."""
+def _run_oxlint(root: str) -> tuple[int, int, int, dict[str, int], dict[str, int], dict[str, dict[str, int]]]:
+    """Return (errors, warnings, info, per_file_violations, rule_counts, per_file_rule_counts) from oxlint JSON output."""
     errors = warnings = info = 0
     per_file: dict[str, int] = {}
+    rule_counts: dict[str, int] = {}
+    per_file_rules: dict[str, dict[str, int]] = {}
     try:
         oxlint_bin = _resolve_bin(root, "oxlint")
         result = subprocess.run(
@@ -181,7 +191,7 @@ def _run_oxlint(root: str) -> tuple[int, int, int, dict[str, int]]:
         )
         raw = result.stdout.decode("utf-8", errors="replace").strip()
         if not raw:
-            return errors, warnings, info, per_file
+            return errors, warnings, info, per_file, rule_counts, per_file_rules
         # oxlint JSON: array of {filePath, messages:[{severity,ruleId,...}]}
         data = json.loads(raw)
         root_path = Path(root).resolve()
@@ -202,44 +212,66 @@ def _run_oxlint(root: str) -> tuple[int, int, int, dict[str, int]]:
                     file_errors += 1
                 else:
                     info += 1
+                rule_id = msg.get("ruleId")
+                if isinstance(rule_id, str) and rule_id:
+                    rule_counts[rule_id] = rule_counts.get(rule_id, 0) + 1
+                    file_rules = per_file_rules.setdefault(rel, {})
+                    file_rules[rule_id] = file_rules.get(rule_id, 0) + 1
             if file_errors:
                 per_file[rel] = per_file.get(rel, 0) + file_errors
     except Exception:
         pass
-    return errors, warnings, info, per_file
+    return errors, warnings, info, per_file, rule_counts, per_file_rules
 
 
 # ── duplication (jscpd) ───────────────────────────────────────────────────────
 
 
-def _run_jscpd(root: str) -> float | None:
+def _run_jscpd(root: str) -> tuple[float | None, str | None]:
+    """Return (pct, error_msg). error_msg is non-None when jscpd ran but did not produce usable output."""
     try:
         jscpd_bin = _resolve_bin(root, "jscpd")
         with tempfile.TemporaryDirectory() as td:
+            # Defaults chosen for monorepo viability:
+            #   --silent / --noTips: keep stderr quiet for CI
+            #   --ignore: skip well-known generated/vendor dirs (target can override
+            #             via .jscpd.json or the `jscpd` section of package.json)
+            #   --min-tokens 50: jscpd default; raise via .jscpd.json if needed
+            #   timeout 300s: large monorepos exceed the prior 120s budget
             result = subprocess.run(
                 [
                     jscpd_bin,
                     "--reporters", "json",
                     "--output", td,
-                    "--languages", "typescript,javascript",
+                    "--format", "typescript,javascript",
                     "--min-tokens", "50",
+                    "--ignore", "node_modules/**,dist/**,build/**,.next/**,coverage/**,.quality-gate/**",
+                    "--silent",
+                    "--noTips",
                     ".",
                 ],
                 cwd=root,
                 capture_output=True,
-                timeout=120,
+                timeout=300,
             )
             report_file = Path(td) / "jscpd-report.json"
             if not report_file.exists():
-                return None
+                stderr = result.stderr.decode("utf-8", errors="replace").strip()
+                msg = f"jscpd produced no report (exit={result.returncode}): {stderr[:200] or '<no stderr>'}"
+                print(f"warning: {msg}", file=sys.stderr)
+                return None, msg
             data = json.loads(report_file.read_text(encoding="utf-8"))
             stats = data.get("statistics", {}).get("total", {})
             pct = stats.get("percentage")
-            if pct is not None:
-                return round(float(pct), 2)
-    except Exception:
-        pass
-    return None
+            if pct is None:
+                msg = "jscpd report missing statistics.total.percentage"
+                print(f"warning: {msg}", file=sys.stderr)
+                return None, msg
+            return round(float(pct), 2), None
+    except Exception as exc:
+        msg = f"jscpd failed: {type(exc).__name__}: {exc}"
+        print(f"warning: {msg}", file=sys.stderr)
+        return None, msg
 
 
 # ── per-file LOC ──────────────────────────────────────────────────────────────
@@ -255,11 +287,17 @@ def _count_loc(file_path: Path) -> int:
 _TS_EXTENSIONS = {".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs"}
 
 
-def _collect_files(root: str, per_file_violations: dict[str, int], soft_limit: int = 300) -> dict:
+def _collect_files(
+    root: str,
+    per_file_violations: dict[str, int],
+    per_file_rules: dict[str, dict[str, int]] | None = None,
+    soft_limit: int = 300,
+) -> dict:
     """Return files dict for files that cross soft_limit OR have violations."""
     root_path = Path(root).resolve()
     result: dict[str, dict] = {}
     skip_dirs = {"node_modules", ".git", "dist", "build", ".next", ".nuxt", "coverage"}
+    rules_by_file = per_file_rules or {}
     for candidate in sorted(root_path.rglob("*")):
         if candidate.suffix not in _TS_EXTENSIONS:
             continue
@@ -276,11 +314,16 @@ def _collect_files(root: str, per_file_violations: dict[str, int], soft_limit: i
         loc = _count_loc(candidate)
         viols = per_file_violations.get(rel, 0)
         if loc >= soft_limit or viols > 0:
-            result[rel] = {
+            entry: dict = {
                 "loc": loc,
                 "complexity": None,
                 "violations": viols,
             }
+            rules = rules_by_file.get(rel) or {}
+            if rules:
+                top_rule = max(rules.items(), key=lambda kv: (kv[1], kv[0]))[0]
+                entry["dominant_rule"] = top_rule
+            result[rel] = entry
     return result
 
 
@@ -296,29 +339,51 @@ def run(root: str) -> dict:
     violations = {"errors": 0, "warnings": 0, "info": 0}
     vulnerabilities = {"critical": 0, "high": 0, "medium": 0, "low": 0}
     per_file_viols: dict[str, int] = {}
+    rule_counts: dict[str, int] = {}
+    tools_broken: list[str] = []
+    tools_reproduce: dict[str, str] = {}
 
     if "bun" in used:
         lp, bp = _run_coverage(root_str)
         coverage = {"line_pct": lp, "branch_pct": bp}
+        tools_reproduce["bun"] = "bun test --coverage"
 
+    per_file_rules: dict[str, dict[str, int]] = {}
     if "biome" in used:
-        err, warn, inf, per_file_viols = _run_biome(root_str)
+        err, warn, inf, per_file_viols, rule_counts, per_file_rules = _run_biome(root_str)
         violations = {"errors": err, "warnings": warn, "info": inf}
+        tools_reproduce["biome"] = "bun x biome check --reporter=summary ."
     elif "oxlint" in used:
-        err, warn, inf, per_file_viols = _run_oxlint(root_str)
+        err, warn, inf, per_file_viols, rule_counts, per_file_rules = _run_oxlint(root_str)
         violations = {"errors": err, "warnings": warn, "info": inf}
+        tools_reproduce["oxlint"] = "bun x oxlint ."
 
     if "jscpd" in used:
-        pct = _run_jscpd(root_str)
+        pct, err_msg = _run_jscpd(root_str)
         duplication = {"pct": pct}
+        tools_reproduce["jscpd"] = (
+            "bun x jscpd --reporters console --format typescript,javascript "
+            "--ignore 'node_modules/**,dist/**,build/**,.next/**,coverage/**,.quality-gate/**' ."
+        )
+        if err_msg is not None:
+            tools_broken.append("jscpd")
 
-    files = _collect_files(root_str, per_file_viols)
+    # Top rules: sort by count desc, keep top 5
+    top_rules = [
+        {"rule": rule, "count": count}
+        for rule, count in sorted(rule_counts.items(), key=lambda kv: (-kv[1], kv[0]))[:5]
+    ]
+
+    files = _collect_files(root_str, per_file_viols, per_file_rules)
 
     return {
         "language": LANGUAGE,
         "root": root_str,
         "tools_used": sorted(used),
         "tools_missing": sorted(missing),
+        "tools_broken": sorted(tools_broken),
+        "tools_reproduce": tools_reproduce,
+        "top_rules": top_rules,
         "coverage": coverage,
         "duplication": duplication,
         "violations": violations,

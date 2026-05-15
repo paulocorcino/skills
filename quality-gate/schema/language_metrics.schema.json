@@ -11,6 +11,25 @@
     "root": {"type": "string"},
     "tools_used": {"type": "array", "items": {"type": "string"}},
     "tools_missing": {"type": "array", "items": {"type": "string"}},
+    "tools_broken": {"type": "array", "items": {"type": "string"}, "description": "Tools that were present but failed to produce usable output"},
+    "tools_reproduce": {
+      "type": "object",
+      "description": "Map of tool name → shell command to reproduce its output locally",
+      "additionalProperties": {"type": "string"}
+    },
+    "top_rules": {
+      "type": "array",
+      "description": "Top lint rules ranked by violation count (descending). Up to 5 entries.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["rule", "count"],
+        "properties": {
+          "rule": {"type": "string"},
+          "count": {"type": "integer", "minimum": 1}
+        }
+      }
+    },
     "coverage": {
       "type": "object",
       "additionalProperties": false,
@@ -53,7 +72,8 @@
         "properties": {
           "loc": {"type": "integer", "minimum": 0},
           "complexity": {"type": ["number", "null"]},
-          "violations": {"type": "integer", "minimum": 0}
+          "violations": {"type": "integer", "minimum": 0},
+          "dominant_rule": {"type": "string"}
         }
       }
     }

@@ -1,0 +1,29 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://corcino.com.br/quality-gate/branch.schema.json",
+  "title": "Quality Gate Branch Intent",
+  "description": "Schema for .quality-gate/branch.json — per-branch declaration of how the branch relates to main. Required on any branch other than main.",
+  "type": "object",
+  "required": ["schema_version", "mode", "anchor_ref", "established_at", "established_commit"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"},
+    "mode": {
+      "type": "string",
+      "enum": ["extend", "replace"],
+      "description": "extend = branch extends main (ratchet against merge-base baseline); replace = branch replaces main's baseline (own snapshot becomes new floor on merge)."
+    },
+    "anchor_ref": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Git ref this branch is anchored against. For extend mode this is the ref used to compute merge-base. For replace mode this records the ref the branch is replacing."
+    },
+    "established_at": {"type": "string", "format": "date-time"},
+    "established_commit": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{7,40}$",
+      "description": "HEAD commit at the time establish ran. Metadata only — not verified at run."
+    },
+    "rationale": {"type": "string"}
+  }
+}
