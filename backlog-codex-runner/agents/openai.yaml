@@ -1,0 +1,7 @@
+interface:
+  display_name: "Backlog Codex Runner"
+  short_description: "Run backlog items via Codex CLI"
+  default_prompt: "Use $backlog-codex-runner to execute the next docs/backlog item with Codex CLI."
+
+policy:
+  allow_implicit_invocation: true
