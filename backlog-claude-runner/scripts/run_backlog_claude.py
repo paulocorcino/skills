@@ -568,7 +568,7 @@ def run_afk_sequence(root, dry_run, require_commit, model, plan_first_interactiv
             save_execution_time(state_file)
 
         if code != 0:
-            if handle_rate_limit(root, sys.argv):
+            if code not in (130, -2) and handle_rate_limit(root, sys.argv):
                 return 0  # at job scheduled; exit cleanly
             return code
 
