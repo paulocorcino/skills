@@ -233,10 +233,10 @@ def interactive_command(root, prompt_text, model, effort=None, remote_control=Fa
         model,
         "--dangerously-skip-permissions",
     ]
-    if effort:
-        cmd += ["--effort", effort]
     if remote_control:
         cmd.append("--remote-control")
+    if effort:
+        cmd += ["--effort", effort]
     cmd.append(prompt_text)
     return cmd
 
