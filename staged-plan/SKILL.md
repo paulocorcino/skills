@@ -53,12 +53,31 @@ After investigation, decide the defaults below (slug, title, stage list, working
 
 Phase 1 investigation is **read-only by contract**. No `Write`, `Edit`, `scaffold.py`, or any file-creating Bash until the user has explicitly approved the materialization. This in-skill gate exists so the skill behaves the same whether or not the harness's plan mode is active — it does not rely on plan mode to prevent premature writes.
 
-When investigation is complete, present a short summary (slug, title, stage list, mode, working-tree, reviewer + reason, report-policy) and request approval. **Pick exactly one gate based on context — never call both:**
+When investigation is complete, present a short summary (slug, title, stage list, mode, working-tree, reviewer + reason, report-policy) and request approval. **Pick exactly one gate based on context — never call more than one:**
 
 - **Inside plan mode** (detection: the `ExitPlanMode` tool is available in your tool list): call `ExitPlanMode` with the summary. The harness's approval doubles as the gate. On approval, plan mode exits and `scaffold.py` can run. Do NOT dump a hand-written plan markdown into `ExitPlanMode` — the summary is a few lines; scaffold renders the full plan. Do NOT additionally call `AskUserQuestion` — that is double-prompting.
-- **Outside plan mode** (detection: `ExitPlanMode` is NOT in your tool list): call `AskUserQuestion` with the summary and options `[scaffold / adjust / cancel]`. On `scaffold`, proceed; on `adjust`, revise and re-gate; on `cancel`, stop. Do NOT skip this step "because the plan looks obvious" — the gate is the user's only checkpoint before the landing commit.
+- **Outside plan mode, interactive** (detection: `ExitPlanMode` is NOT in your tool list AND `STAGED_PLAN_NONINTERACTIVE` is unset or not `1` — check via `Bash`: `echo "${STAGED_PLAN_NONINTERACTIVE:-0}"`): call `AskUserQuestion` with the summary and options `[scaffold / adjust / cancel]`. On `scaffold`, proceed; on `adjust`, revise and re-gate; on `cancel`, stop. Do NOT skip this step "because the plan looks obvious" — the gate is the user's only checkpoint before the landing commit.
+- **Non-interactive** (detection: `STAGED_PLAN_NONINTERACTIVE=1` in env, set explicitly by the calling harness; e.g. `backlog-claude-runner` invoking the skill via `claude -p`): there is no human to prompt and `AskUserQuestion` would hang. Instead, emit the summary as a single delimited block to stdout BEFORE running `scaffold.py`, then proceed directly to scaffold + fill. The calling harness captures the block for post-hoc review. Emit exactly:
 
-The rule is identical in both cases: **no file writes in Phase 1 until the user says go.**
+  ```
+  <<PRE_SCAFFOLD_SUMMARY>>
+  slug: <plan-slug>
+  title: <plan title>
+  stages:
+    - <Stage 1 title>
+    - <Stage 2 title>
+    - ...
+  mode: autonomous
+  working-tree: <clean-required|...>
+  reviewer: <none|light|deep>  reason: <reason or "—">
+  report-policy: <committed|gitignored>
+  output: <absolute path of plan file>
+  <<END>>
+  ```
+
+  This mode trusts the upstream prompt to have pre-specified the work. It MUST NOT be entered opportunistically (e.g. "the agent thinks no human is watching") — only when the env var is set explicitly by the caller. If the env var is unset and no plan-mode tool is available, fall back to `AskUserQuestion` and do not write anything.
+
+The rule is identical in all three cases: **no file writes in Phase 1 until either the user approves (interactive paths) or the harness has set `STAGED_PLAN_NONINTERACTIVE=1` and the summary block has been emitted (non-interactive path).**
 
 ### Fixed defaults — do NOT prompt the user for these
 
@@ -111,9 +130,9 @@ git rev-parse --show-toplevel
 ```
 
 - If the command **fails** (cwd is not inside a git repo): abort and instruct the user to re-invoke the skill from inside the target repo. Do NOT scaffold to `~/.claude/plans/` for repo work — that breaks Phase 1.5 (vendoring `_verify.py`, narrowing `.gitignore`, landing commit) and forces the executor to improvise at runtime.
-- If the command **succeeds**: the output path MUST be `<that-path>/docs/plans/<plan-slug>.md`. Post-stage reports go in the same directory.
+- If the command **succeeds**: the **canonical** output path is `<that-path>/docs/plans/<plan-slug>.md`. Post-stage reports go in the same directory. Deviate from `docs/plans/` only when a calling harness mandates a different in-repo location (e.g. `backlog-claude-runner` may direct the plan to `.agents/...`); in that case the harness MUST set `STAGED_PLAN_NONINTERACTIVE=1` and provide the absolute target path. Never invent a non-canonical location yourself.
 
-`scaffold.py` enforces this: `--output` outside `<repo-root>/docs/plans/` exits with code 4 unless `--allow-outside-repo` is passed (escape hatch for genuine no-repo planning sessions only — never for work targeting a repo).
+`scaffold.py` enforces this: `--output` must resolve **inside a git repo** (exit code 4 otherwise, unless `--allow-outside-repo` is passed for the rare no-repo fallback). Any in-repo path is accepted; the scaffold derives the plan dir from `--output` and rewrites every boilerplate reference to it (verify scripts, report template, logs dir, Plan landing commit advice, reviewer-output dir). Landing the plan directly at the repo root is rejected.
 
 **Never** write to `<repo>/.claude/plans/` — deprecated, triggers permission prompts for subagents.
 

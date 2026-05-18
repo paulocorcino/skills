@@ -1,0 +1,7 @@
+interface:
+  display_name: "Backlog Claude Runner"
+  short_description: "Run backlog items via Claude Code CLI"
+  default_prompt: "Use $backlog-claude-runner to execute the next docs/backlog item with Claude Code CLI."
+
+policy:
+  allow_implicit_invocation: true

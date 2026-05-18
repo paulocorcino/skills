@@ -4,13 +4,21 @@
 Usage:
     python scaffold.py --slug <slug> --title "<plan title>" \
         --stage "Stage 1 title" --stage "Stage 2 title" ... \
-        --output docs/plans/<slug>.md \
+        --output <repo-root>/<plan-dir>/<slug>.md \
         [--mode autonomous|semi-autonomous] \
         [--working-tree clean-required|stash-authorized|integrate-existing|abort-until-clean] \
         [--reviewer none|light|deep] \
         [--reviewer-reason "<why this level>"] \
         [--report-policy committed|gitignored] \
         [--force]
+
+`--output` may point to ANY path inside a git repo. The canonical convention
+is `<repo-root>/docs/plans/<slug>.md`, but harness integrations (e.g.
+`backlog-claude-runner`) may direct the plan to a different in-repo dir
+(`.agents/tmp/...`, `.agents/plans/...`, etc.). The scaffold derives the
+plan directory from `--output` and substitutes it everywhere the boilerplate
+references the plan dir — so verify scripts, report templates, and the Plan
+landing commit advice stay consistent regardless of the chosen location.
 
 The planner runs this BEFORE filling in stage-specific content. Output contains
 all repeated boilerplate (Execution model, Execution policy, Executor adapter,
@@ -21,6 +29,8 @@ operations, and hand-off prompts.
 Safety:
 - --output is required (no stdout redirect, which can truncate an existing
   file before Python decides whether to error).
+- --output must resolve inside a git repo (or pass --allow-outside-repo for
+  the rare no-repo planning fallback).
 - If --output already exists, the script aborts with exit 3 unless --force is
   passed. This protects filled plans from being silently overwritten.
 """
@@ -624,6 +634,17 @@ defeats the cost-savings purpose. -->
 """)
 
     rendered = "\n".join(parts)
+    # Substitute the canonical plan-dir literal 'docs/plans' with the actual
+    # plan directory (relative to repo root) derived from --output. When the
+    # planner chose the canonical location, plan_dir_rel == 'docs/plans' and
+    # this is a no-op. When a harness directed the plan elsewhere
+    # (e.g. '.agents/tmp/backlog-claude-runner'), every boilerplate reference
+    # to the plan dir — verify-script paths, report-template paths, logs dir,
+    # reviewer-output dir, .gitignore narrowing advice — is rewritten in one
+    # pass so the Plan landing commit and Phase 2 gates stay coherent.
+    plan_dir_rel = getattr(args, "plan_dir_rel", None)
+    if plan_dir_rel and plan_dir_rel != "docs/plans":
+        rendered = rendered.replace("docs/plans", plan_dir_rel)
     # Substitute literal '<repo>' with the absolute repo root when known.
     # When None (--allow-outside-repo with no repo found), leave '<repo>' in
     # place so the planner fills it; do NOT crash here.
@@ -693,35 +714,49 @@ def main() -> int:
 
     out = Path(args.output).resolve()
 
-    # Location guard: plans for repo work MUST live in <repo-root>/docs/plans/.
-    # Phase 1.5 (Plan landing commit) depends on this — a plan written outside
-    # the repo cannot be vendored, gitignore-narrowed, or committed.
+    # Location guard: --output must resolve inside a git repo. Any in-repo path
+    # is accepted; the scaffold derives the plan dir from --output and rewrites
+    # boilerplate paths accordingly. The previous hard requirement that the
+    # parent be exactly <repo>/docs/plans/ was dropped: harness integrations
+    # (e.g. backlog-claude-runner) legitimately need other in-repo locations,
+    # and the deterministic boilerplate is the load-bearing value here, not
+    # the specific directory name. The canonical convention remains
+    # <repo>/docs/plans/<slug>.md — deviate only when a harness mandates it.
     repo_root = None
     for ancestor in [out.parent, *out.parent.parents]:
         if (ancestor / ".git").exists():
             repo_root = ancestor
             break
-    if repo_root is None:
-        if not args.allow_outside_repo:
+    if repo_root is None and not args.allow_outside_repo:
+        print(
+            f"error: --output ({out}) is not inside a git repo. Staged plans "
+            "for repo work MUST be created somewhere under a git repository "
+            "root (canonical: <repo-root>/docs/plans/<slug>.md). "
+            "Re-invoke from inside the target repo, or pass --allow-outside-repo "
+            "for the rare no-repo planning fallback.",
+            file=sys.stderr,
+        )
+        return 4
+
+    # Derive plan_dir_rel — the path of out.parent relative to repo_root, in
+    # POSIX form. Used by scaffold() to rewrite every literal 'docs/plans'
+    # reference in the rendered boilerplate. When out lives directly under the
+    # repo root, plan_dir_rel == '.' — surface that as an error since landing
+    # the plan in the repo root would pollute it.
+    plan_dir_rel = None
+    if repo_root is not None:
+        try:
+            plan_dir_rel = out.parent.relative_to(repo_root).as_posix()
+        except ValueError:
+            plan_dir_rel = None
+        if plan_dir_rel == ".":
             print(
-                f"error: --output ({out}) is not inside a git repo. Staged plans "
-                "for repo work MUST be created at <repo-root>/docs/plans/<slug>.md. "
-                "Re-invoke from inside the target repo, or pass --allow-outside-repo "
-                "for the rare no-repo planning fallback.",
+                f"error: --output ({out}) would land the plan directly at the "
+                "repo root. Choose a subdirectory (canonical: docs/plans/).",
                 file=sys.stderr,
             )
             return 4
-    else:
-        expected_dir = (repo_root / "docs" / "plans").resolve()
-        if out.parent != expected_dir:
-            print(
-                f"error: --output parent must be {expected_dir} "
-                f"(got {out.parent}). Phase 1.5 (Plan landing commit) requires "
-                "the plan to live at <repo-root>/docs/plans/<slug>.md so the "
-                "vendored _verify.py and verify scripts land alongside it.",
-                file=sys.stderr,
-            )
-            return 4
+    args.plan_dir_rel = plan_dir_rel
 
     # Resolve repo_root for <repo> substitution: explicit --repo-root wins;
     # otherwise use the auto-detected one (None when --allow-outside-repo).
