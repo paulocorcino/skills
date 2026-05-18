@@ -33,8 +33,15 @@ def repo_root():
     return Path(root).resolve()
 
 
+def _backlog_dir(root):
+    for candidate in (root / "docs" / "backlog", root / "docs" / "backlogs"):
+        if candidate.is_dir():
+            return candidate
+    return root / "docs" / "backlog"  # default for error messages
+
+
 def backlog_files(root):
-    backlog_dir = root / "docs" / "backlog"
+    backlog_dir = _backlog_dir(root)
 
     def has_numeric_prefix(name):
         dash = name.find("-")
