@@ -858,10 +858,17 @@ def schedule_retry(command, run_at_dt, cwd=None):
     cwd_str = str(cwd) if cwd else None
 
     if shutil.which("at"):
+        log_dir = Path.home() / ".claude" / "backlog-runner-logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_file = log_dir / f"at-{run_at_dt.strftime('%Y%m%d-%H%M%S')}.log"
+
         parts = []
         if cwd_str:
             parts.append(f"cd {shlex.quote(cwd_str)}")
-        parts.append(" ".join(shlex.quote(str(a)) for a in command))
+        parts.append(
+            " ".join(shlex.quote(str(a)) for a in command)
+            + f" >>{shlex.quote(str(log_file))} 2>&1"
+        )
         cmd_str = " && ".join(parts)
         at_time = run_at_dt.strftime("%H:%M %Y-%m-%d")
         result = subprocess.run(
@@ -869,7 +876,7 @@ def schedule_retry(command, run_at_dt, cwd=None):
         )
         if result.returncode == 0:
             job_info = result.stderr.strip()
-            return f"'at' job at {at_time} — {job_info}", True
+            return f"'at' job at {at_time} — {job_info} (log: {log_file})", True
 
     # Fallback: detached background Python process
     bg = (
