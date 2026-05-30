@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
-"""StopFailure hook: detect usage/rate limit, parse reset time from transcript,
-and surface a systemMessage with resume instructions."""
+"""StopFailure hook: handles rate_limit, session_limit (transcript-based reset time)
+and server_error (fixed 5-minute retry)."""
 import json
 import re
+import sys
 from datetime import datetime, timedelta
 from pathlib import Path
+
+SERVER_ERROR_RETRY_MINUTES = 5
 
 
 def extract_reset_time(transcript_path):
@@ -49,12 +52,8 @@ def compute_reset_datetime(day_str, time_str):
     return reset
 
 
-def main():
-    try:
-        payload = json.load(__import__("sys").stdin)
-    except (json.JSONDecodeError, ValueError):
-        payload = {}
-
+def handle_limit(payload):
+    """rate_limit / session_limit: parse reset time from transcript."""
     transcript_path = payload.get("transcript_path", "")
     session_id = payload.get("session_id", "")
 
@@ -63,7 +62,7 @@ def main():
 
     day_str, time_str = extract_reset_time(transcript_path)
     if not time_str:
-        print(json.dumps({"systemMessage": "Rate limit hit. No reset time found in transcript."}))
+        print(json.dumps({"systemMessage": "Limit hit. No reset time found in transcript."}))
         return
 
     reset_dt = compute_reset_datetime(day_str, time_str)
@@ -73,13 +72,38 @@ def main():
     retry_dt = reset_dt + timedelta(minutes=5)
     resume_hint = f"claude --resume {session_id}" if session_id else "claude --resume <session_id>"
 
-    system_msg = (
-        f"Rate limit hit · resets {reset_dt.strftime('%H:%M')} · retry at {retry_dt.strftime('%H:%M')}\n"
+    print(json.dumps({"systemMessage": (
+        f"Limit hit · resets {reset_dt.strftime('%H:%M')} · retry at {retry_dt.strftime('%H:%M')}\n"
         f"Session: {session_id or 'unknown'}\n"
         f"Resume: {resume_hint}"
-    )
+    )}))
 
-    print(json.dumps({"systemMessage": system_msg}))
+
+def handle_server_error(payload):
+    """server_error: fixed 5-minute retry."""
+    session_id = payload.get("session_id", "")
+    retry_dt = datetime.now() + timedelta(minutes=SERVER_ERROR_RETRY_MINUTES)
+    resume_hint = f"claude --resume {session_id}" if session_id else "claude --resume <session_id>"
+
+    print(json.dumps({"systemMessage": (
+        f"Server error · retry at {retry_dt.strftime('%H:%M')}\n"
+        f"Session: {session_id or 'unknown'}\n"
+        f"Resume: {resume_hint}"
+    )}))
+
+
+def main():
+    try:
+        payload = json.load(sys.stdin)
+    except (json.JSONDecodeError, ValueError):
+        payload = {}
+
+    stop_reason = payload.get("stop_reason", "")
+
+    if stop_reason == "server_error":
+        handle_server_error(payload)
+    else:
+        handle_limit(payload)
 
 
 if __name__ == "__main__":

@@ -202,8 +202,9 @@ The Execution policy in the plan declares Mode, retry, working tree, and reviewe
 3. **On completion, verify green** — autonomous: launch next; semi-autonomous: post checkpoint and wait `[y / edit / abort]`; red: apply retry rule.
 4. **Retry:** up to 2 auto-retries; never on scope violations or hook bypasses.
 5. **After final stage:** end-to-end verification, reviewer gate (if configured), summary table.
+6. **Human-interaction stops** (reviewer BLOCKED, retry exhausted, scope violation, dirty-tree mid-run): the executor calls `PushNotification` before yielding control. The scaffold renders this rule into every plan's `## Execution policy`.
 
-Full mechanics, retry exclusions, semi-autonomous checkpoint format: see `references/execution.md`.
+Full mechanics, retry exclusions, semi-autonomous checkpoint format, notification spec: see `references/execution.md`.
 
 ## Subagent trace / auditability
 

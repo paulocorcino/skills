@@ -593,6 +593,7 @@ def render_execution_policy(mode: str, working_tree: str, reviewer: str, reviewe
 - On red: auto-retry-up-to-2 — cap of 2 retries; each retry passes the prior failure excerpt and narrows the instruction to the same file list. NEVER retry on scope violations, pre-commit hook rejections, or hook bypass attempts (escalate immediately). On exhaustion: stop and surface.
 - Working-tree policy: {working_tree} — per-state behavior is described inline in `## Stage 0`.
 {reviewer_line}
+- Human-interaction stops: whenever execution halts awaiting a human decision (reviewer verdict `fail`/`blocked` after fix round; retry exhausted; scope violation / hook-bypass escalation; dirty-tree mid-run), the executor MUST call `PushNotification` BEFORE yielding control. Message format: `"Plan <slug>: <reason> — see <report-or-file path>"`. Do NOT notify on normal between-stage transitions or successful completion.
 """
 
 

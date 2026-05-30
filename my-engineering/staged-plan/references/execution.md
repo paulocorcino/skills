@@ -72,13 +72,38 @@ Build passed, gates clean, commit SHA in `git log`, post-stage report written, s
 - Up to **2 auto-retries** per stage.
 - Each retry passes the prior run's failure excerpt back into the hand-off and narrows the instruction to "fix the reported failure only, within the same file list".
 - **No retry on:** scope violations (subagent touched files outside the list), pre-commit hook rejections, or attempts to bypass hooks. These are escalated immediately.
-- On exhaustion: stop, surface the failure chain to the user, wait.
+- On exhaustion: stop, surface the failure chain to the user, wait. **Before yielding control, call `PushNotification`** (see §5).
 - If the plan says "pause on first red", skip retries entirely.
+- Scope violations and hook-bypass escalations also notify via `PushNotification` before yielding (§5).
 
 ### 4. After the final stage
 
 - Run the end-to-end verification block.
-- If `Reviewer: light` or `deep`, run the reviewer gate exactly as the plan describes it (reviewer -> arbiter -> fix round -> conditional re-review -> persist to `docs/plans/reports/<plan-slug>_reviewer_<seq>.md`). On `fail` / `blocked`, stop and surface the md file path; do NOT replan automatically and do NOT trigger another fix round.
+- If `Reviewer: light` or `deep`, run the reviewer gate exactly as the plan describes it (reviewer -> arbiter -> fix round -> conditional re-review -> persist to `docs/plans/reports/<plan-slug>_reviewer_<seq>.md`). On `fail` / `blocked`, stop and surface the md file path; do NOT replan automatically and do NOT trigger another fix round. **Before yielding control, call `PushNotification`** (see §5).
 - Emit the stage -> commit SHA -> status -> report-path table.
 - List any externally-blocked items still open, with reopen criteria.
 - If working-tree policy was `stash-authorized`, remind the user to `git stash pop` (or list the stash ref).
+
+### 5. Human-interaction notifications
+
+Whenever execution stops awaiting a human decision, the executor MUST call `PushNotification` BEFORE yielding control. The user may be away from the terminal; the notification is what brings them back.
+
+**Notify on:**
+- Reviewer verdict `fail` / `blocked` after the fix round + re-review.
+- Retry rule exhausted (2 retries failed) for a stage.
+- Scope violation or hook-bypass escalation (no retry path).
+- Dirty-tree state encountered mid-run that requires a user choice.
+
+**Do NOT notify on:**
+- Normal between-stage transitions (autonomous mode).
+- Semi-autonomous between-stage checkpoint — the user is already watching that mode by design.
+- Successful end-to-end completion (no human action required).
+
+**Message format:** `"Plan <slug>: <reason> — see <report-or-file path>"`. Keep under ~120 chars; the report file holds the detail.
+
+Examples:
+- `"Plan 008-outbound-reliability: reviewer BLOCKED (4 findings) — see docs/plans/reports/008-outbound-reliability_reviewer_001.md"`
+- `"Plan migration-x: Stage 3 retry exhausted — see docs/plans/migration-x-stage-3-report.md"`
+- `"Plan migration-x: Stage 2 scope violation (touched files outside list) — escalated, no retry"`
+
+If `PushNotification` is unavailable in the executor's tool set, fall back to a clearly delimited `<<HUMAN_REQUIRED>>` block in stdout with the same message; an outer harness can grep for it.
