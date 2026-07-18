@@ -1,0 +1,26 @@
+# Mechanical backstop for dbkit/: no schema change lands with verify.py failing,
+# regardless of whether the author read any README.
+name: verify
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # Pins have a single source: dbkit/tools/_deps.py (no requirements file, by design).
+      - name: Install dbkit/ tooling dependencies
+        run: |
+          pip install $(python -c "import sys; sys.path.insert(0, 'dbkit/tools'); from _deps import REQUIRES; print(' '.join(f'{p}=={v}' for p, v in REQUIRES.items()))")
+
+      - name: Run verification pipeline
+        run: python dbkit/tools/verify.py

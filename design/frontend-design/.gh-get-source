@@ -1,0 +1,7 @@
+source_url=https://github.com/anthropics/skills/tree/main/skills/frontend-design
+owner=anthropics
+repo=skills
+branch=main
+folder_path=skills/frontend-design
+commit=9d2f1ae187231d8199c64b5b762e1bdf2244733d
+updated_at=2026-07-15T22:13:22-03:00
