@@ -7,16 +7,6 @@ from code or from this file.
 
 The subcommands form the adoption loop; each consumes the previous one's output:
 
-  probe       fail-closed read-only check, run BEFORE anything else: records
-              server version/edition (the source dialect), the account's
-              effective database permissions (fn_my_permissions) and the
-              non-system schemas into .scratch/adoption/probe.json. Exits 1 if
-              the account holds ANY permission outside the read-safe whitelist
-              — ApplicationIntent=ReadOnly does NOT prevent writes on a primary
-              (it only routes/enforces on readable secondaries), so a
-              write-capable account is a real risk, not a formality. Proceeding
-              anyway is a HUMAN decision made explicit with
-              --accept-write-risk "<reason>" and recorded in the ledger.
   inventory   snapshot the catalog into .scratch/adoption/inventory.json — every
               object in the adopted schema with a definition FINGERPRINT (short
               sha256 of its normalized shape) and its dependency edges. This
@@ -26,9 +16,7 @@ The subcommands form the adoption loop; each consumes the previous one's output:
               dbkit/schema/tables/<name>.sql; views/functions/procedures/
               triggers and support objects (sequences, synonyms, table types) ->
               dbkit/schema/native/tsql/<kind>/<name>.sql.
-              --objects name1,name2 restricts to a batch. carve re-reads the
-              live catalog (it does not render from the baseline); if the DB
-              changed since `inventory`, reconcile reports the drift.
+              --objects name1,name2 restricts to a batch.
   reconcile   prove coverage and detect drift: re-inventory the live catalog in
               memory (baseline stays untouched) and diff it against baseline
               AND repo files —
@@ -38,19 +26,8 @@ The subcommands form the adoption loop; each consumes the previous one's output:
                           the baseline — a repo migration landed; re-run
                           `inventory` to fold it in
                 MISSING   inventory object with no carved file in the repo
-                STALE     fingerprint stable but the carved file's content no
-                          longer matches the live rendering — hand-edited,
-                          corrupted, or the renderer evolved; re-carve after
-                          deciding direction
-                BLOCKED   object the tool cannot carve faithfully (encrypted
-                          module, unsupported object class or index type,
-                          unsafe filename) with no exceptions entry covering it
                 UNDEPLOYED  repo file with no live object — a migration still
                           in flight (warning only, does not fail)
-              reconcile consumes .scratch/adoption/exceptions.json — the human
-              decisions (objects `excluded` or `blocked`, each with a
-              non-empty reason) — and exempts covered objects instead of
-              reporting them; an entry without a reason is itself a finding.
               Every failing finding is a per-object DIRECTION decision, never
               an auto-fix (dynamics in verify.py's docstring): change came from
               outside -> re-carve the fact and update the model; change is
@@ -58,12 +35,8 @@ The subcommands form the adoption loop; each consumes the previous one's output:
               Run it at the start of any schema session (`verify.py --live`)
               while the live DB can still change outside the repo.
   census      reality numbers — row counts, implied-FK orphan counts, enum-ish
-              cardinalities, tables without a declared PK (candidate-key
-              duplicate/null counts). `--candidates <json>` adds FK edges from
-              any provenance (code excavation, agent hypothesis) to the orphan
-              count — the census tests candidates, it does not only generate
-              them. Aggregates only, never row values; feeds the gap sections
-              of dbkit/model/database.md.
+              cardinalities. Aggregates only, never row values; feeds the gap
+              sections of dbkit/model/database.md.
   discover    DB-to-Domain discovery — rank tables by structural relevance
               (referencing tables + referencing modules dominate; row count is
               tiebreaker only), classify their structural role (junction,
@@ -85,31 +58,18 @@ interface only when a second engine exists, never before. `verify.py --live`
 discovers the tool by glob (`dbkit/tools/extract_*.py`) — no hardcoded name.
 
 Stable contract (what every port must honor):
-  - CLI: the six subcommands (probe / inventory / carve / reconcile / census /
-    discover), `--schema`, `--objects` for carve batches;
-    exit 0 = clean, exit 1 = findings (probe, reconcile) / failure.
+  - CLI: the four subcommands, `--schema`, `--objects` for carve batches;
+    exit 0 = clean, exit 1 = findings (reconcile) / failure.
   - Outputs: .scratch/adoption/inventory.json with objects[] each carrying
-    {schema, name, type, fingerprint, depends_on, target} (+ optional
-    blocked reason); .scratch/adoption/probe.json with version / permissions /
-    write_capable / schemas; .scratch/adoption/census.json with row_counts /
-    implied_fk_orphans / enumish_cardinality / tables_without_pk /
-    candidate_fk_orphans (plus engine equivalents of untrusted constraints).
-  - Object identity is (type, name) within a schema — never name alone
-    (engines let a table and a table type share a name).
+    {schema, name, type, fingerprint, depends_on, target};
+    .scratch/adoption/census.json with row_counts / implied_fk_orphans /
+    enumish_cardinality (plus engine equivalents of untrusted constraints).
   - reconcile finding classes and their semantics: DRIFT, NEW, APPLIED,
-    DROPPED, MISSING, STALE, BLOCKED (failures) and UNDEPLOYED (warning) —
-    see cmd_reconcile; exceptions.json entries (excluded/blocked + reason)
-    exempt objects mechanically.
+    DROPPED, MISSING (failures) and UNDEPLOYED (warning) — see cmd_reconcile.
   - Fingerprint semantics: hash of the normalized CATALOG shape, not of
-    rendered DDL text (renderer evolution must never fake drift; STALE is the
-    separate file-vs-rendering check that catches tampered files).
-  - Safety: probe is fail-closed — write-capable accounts stop the run unless
-    the human overrides with a recorded reason; connection pinned read-only
-    where the engine allows; credentials from .env only; census emits
-    aggregates, never row values; catalog identifiers are engine-quoted before
-    interpolation into dynamic SQL.
-  - Coverage honesty: object classes or features the renderer cannot carve
-    faithfully become BLOCKED findings, never silent omissions.
+    rendered DDL text (renderer evolution must never fake drift).
+  - Safety: connection pinned read-only where the engine allows; credentials
+    from .env only; census emits aggregates, never row values.
   - Carve targets follow the repo layout, whose rules live in the READMEs:
     dbkit/schema/tables/README.md (one table per file, comments preserved),
     dbkit/schema/native/README.md (N3: one subfolder per dialect, one per
@@ -136,68 +96,6 @@ The changelog is what makes that merge informed — a version number says THAT
 something diverged, the changelog says WHAT.
 
 CHANGELOG:
-  2.1.3  gate message loses its last read-only-login suggestion (owner: the
-         notification alone is the policy; the alternative is not the tool's
-         to sell).
-  2.1.2  module renderings normalize CRLF/CR to LF. write_text(newline="\n")
-         keeps stray \r bytes while read_text() translates them away, so
-         every CRLF module (most of them, on SQL Server) carved cleanly and
-         then reconciled as a false STALE seconds later. Found by reconcile
-         itself on the first full carve of bot_new. Also: the accept-path
-         message no longer re-recommends a read-only login (owner policy).
-  2.1.1  gate message follows the owner's policy: notify the elevated
-         permissions and wait for acceptance — no unlock menu, no CREATE
-         LOGIN script (the human adopts with the credential they chose to
-         provide; acceptance = --accept-write-risk, which the agent fills
-         with a factual reason once given). Fail-closed exit preserved: no
-         flag, no advance.
-  2.1.0  probe UX, after its first real fail-closed stop confused the human:
-         - connection errors are diagnosed, not dumped: common engine errors
-           (login 18456/28000, unknown DB 4060, unreachable HYT00/08001,
-           missing driver IM002, TLS trust) map to WHICH .env variable to
-           fix — several hints can apply at once; a missing variable is
-           named too. Serves every subcommand, since all go through connect().
-         - the write-capable stop reads as a decision, not a crash: the
-           permission dump became headline perms + count (full list stays in
-           probe.json), the message says the run is PAUSED for a human
-           ("STOPPED ... NOT an error"), and unlock #1 ships ready-to-run
-           T-SQL for the dedicated read-only login (db_datareader +
-           VIEW DEFINITION). What deliberately did NOT change: the gate still
-           never resolves itself — auto-accepting write risk would delete
-           the safety property the gate exists to hold.
-  2.0.0  safety + fidelity hardening after external review (major: CLI and
-         finding classes grew, identity semantics changed):
-         - `probe` subcommand: fail-closed effective-permission check
-           (fn_my_permissions vs a read-safe whitelist), server version/
-           edition, non-system schema list -> probe.json; write-capable
-           accounts stop the run unless --accept-write-risk "<reason>".
-         - renderers honor the object's schema (dbo was hardcoded: carving
-           --schema sales produced dbo DDL — silent wrong output).
-         - object identity is (type, name) everywhere (a table and a table
-           type may share a name; reconcile used to collapse them).
-         - `]` doubled in bracket quoting (ident); census/orphan dynamic SQL
-           quotes every catalog identifier via bq() (QUOTENAME semantics).
-         - module with NULL definition (WITH ENCRYPTION) is a BLOCKED
-           finding, not an AttributeError.
-         - coverage honesty: uncovered sys.objects classes (CLR, rules,
-           standalone defaults, ...), alias UDTs, index types beyond
-           (NON)CLUSTERED, unsafe/colliding filenames -> BLOCKED findings,
-           never silent omissions or wrong DDL.
-         - reconcile: new STALE finding (stable fingerprint but carved file
-           differs from live rendering); consumes exceptions.json
-           (excluded/blocked + mandatory reason) so the skill's
-           done-criterion is mechanical, not a hand cross-check.
-  1.2.0  census learns the two adverse-legacy findings: (a) tables WITHOUT a
-         declared PK become a census entry — candidate key picked by declared
-         single-column unique index, else id-ish column name, else first
-         ordinal position (PKs overwhelmingly sit first), with duplicate and
-         null COUNTs only, never values; whether the candidate IS the
-         identity stays a grill decision. (b) `census --candidates <json>`
-         counts orphans for FK edges of ANY provenance — code-excavated ORM
-         joins, agent hypotheses over cryptic names — so a semantic candidate
-         reaches the grill sized ("violated by N rows"), never as a bare
-         guess. Orphan counting factored into count_orphans() (now supports
-         ref_column != column); name-implied behavior unchanged.
   1.1.0  add `discover` (DB-to-Domain discovery): per-table relevance score
          (3×referencing tables + 2×referencing modules + log10(rows) as
          tiebreaker), structural-role candidates (junction / lookup / log /
@@ -218,7 +116,7 @@ CHANGELOG:
 """
 from __future__ import annotations
 
-__version__ = "2.1.3"
+__version__ = "1.1.0"
 
 import argparse
 import hashlib
@@ -232,8 +130,6 @@ ROOT = Path(__file__).resolve().parents[1]
 REPO = ROOT.parent
 SCRATCH = REPO / ".scratch" / "adoption"
 INVENTORY = SCRATCH / "inventory.json"
-EXCEPTIONS = SCRATCH / "exceptions.json"
-PROBE = SCRATCH / "probe.json"
 TABLES_DIR = ROOT / "schema" / "tables"
 NATIVE_DIR = ROOT / "schema" / "native" / "tsql"
 
@@ -254,50 +150,18 @@ def connect():
     import os
 
     load_dotenv(REPO / ".env")
-    try:
-        conn_str = (
-            f"DRIVER={{{os.environ['DB_ODBC_DRIVER']}}};"
-            f"SERVER={os.environ['DB_HOST']},{os.environ['DB_PORT']};"
-            f"DATABASE={os.environ['DB_NAME']};"
-            f"UID={os.environ['DB_USER']};PWD={os.environ['DB_PASSWORD']};"
-            f"Encrypt={os.environ.get('DB_ENCRYPT', 'yes')};"
-            f"TrustServerCertificate={os.environ.get('DB_TRUST_SERVER_CERTIFICATE', 'no')};"
-            "ApplicationIntent=ReadOnly;"
-        )
-    except KeyError as exc:
-        sys.exit(f"connection failed: {exc.args[0]} is missing from .env — "
-                 "fill it and re-run")
-    try:
-        conn = pyodbc.connect(conn_str, timeout=15)
-    except pyodbc.Error as exc:
-        sys.exit(connection_diagnosis(str(exc)))
+    conn_str = (
+        f"DRIVER={{{os.environ['DB_ODBC_DRIVER']}}};"
+        f"SERVER={os.environ['DB_HOST']},{os.environ['DB_PORT']};"
+        f"DATABASE={os.environ['DB_NAME']};"
+        f"UID={os.environ['DB_USER']};PWD={os.environ['DB_PASSWORD']};"
+        f"Encrypt={os.environ.get('DB_ENCRYPT', 'yes')};"
+        f"TrustServerCertificate={os.environ.get('DB_TRUST_SERVER_CERTIFICATE', 'no')};"
+        "ApplicationIntent=ReadOnly;"
+    )
+    conn = pyodbc.connect(conn_str, timeout=15)
     conn.timeout = 60
     return conn
-
-
-def connection_diagnosis(msg: str) -> str:
-    """Translate the engine's connection error into WHICH .env variable to fix
-    — nobody should have to decode an ODBC traceback mid-adoption. Every hint
-    names its variable; several can apply at once (a wrong DB_NAME and a wrong
-    password fail together); unrecognized errors fall back to the raw text."""
-    hints = []
-    if "IM002" in msg:
-        hints.append("ODBC driver not found -> DB_ODBC_DRIVER (e.g. "
-                     "'ODBC Driver 18 for SQL Server'; install it if absent)")
-    if "18456" in msg or "28000" in msg:
-        hints.append("login rejected -> DB_USER / DB_PASSWORD")
-    if "4060" in msg:
-        hints.append("database refused -> DB_NAME (typo, or this login has no "
-                     "access to that database)")
-    if "HYT00" in msg or "08001" in msg:
-        hints.append("server unreachable -> DB_HOST / DB_PORT (also check "
-                     "firewall and that the instance accepts TCP)")
-    if "certificate" in msg.lower():
-        hints.append("TLS trust failed -> DB_TRUST_SERVER_CERTIFICATE=yes for "
-                     "a dev server, or fix the server certificate")
-    fixes = ("\n".join(f"  fix: {h}" for h in hints) if hints else
-             "  fix: error not recognized — correct one .env variable at a time")
-    return f"connection failed:\n  {msg}\n{fixes}"
 
 
 def fetch_rows(cur, sql: str, *params) -> list[tuple]:
@@ -540,8 +404,8 @@ def read_table_types(cur, schema: str) -> dict[str, list[dict]]:
     return out
 
 
-def render_sequence(schema: str, name: str, sq: dict) -> str:
-    lines = [f"CREATE SEQUENCE {ident(schema)}.{ident(name)}",
+def render_sequence(name: str, sq: dict) -> str:
+    lines = [f"CREATE SEQUENCE dbo.{ident(name)}",
              f"    AS {sq['type'].upper()}",
              f"    START WITH {sq['start']}",
              f"    INCREMENT BY {sq['increment']}",
@@ -551,14 +415,14 @@ def render_sequence(schema: str, name: str, sq: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
-def render_synonym(schema: str, name: str, base: str) -> str:
-    return f"CREATE SYNONYM {ident(schema)}.{ident(name)} FOR {base};\n"
+def render_synonym(name: str, base: str) -> str:
+    return f"CREATE SYNONYM dbo.{ident(name)} FOR {base};\n"
 
 
-def render_table_type(schema: str, name: str, cols: list[dict]) -> str:
+def render_table_type(name: str, cols: list[dict]) -> str:
     body = ",\n".join(f"    {ident(c['name'])} {render_type(c)}"
                       f"{' NULL' if c['nullable'] else ' NOT NULL'}" for c in cols)
-    return f"CREATE TYPE {ident(schema)}.{ident(name)} AS TABLE (\n{body}\n);\n"
+    return f"CREATE TYPE dbo.{ident(name)} AS TABLE (\n{body}\n);\n"
 
 
 def read_object_list(cur, schema: str) -> list[dict]:
@@ -572,37 +436,6 @@ def read_object_list(cur, schema: str) -> list[dict]:
     return [{"name": r[0], "type": r[1].strip()} for r in rows]
 
 
-KNOWN_INDEX_TYPES = {"CLUSTERED", "NONCLUSTERED"}
-
-
-def read_uncovered(cur, schema: str) -> list[dict]:
-    """Object classes this tool does NOT carve — reported, never silently
-    omitted (coverage honesty in the PORTING CONTRACT). Two sweeps:
-    sys.objects types outside the covered set (CLR modules, rules, standalone
-    defaults, service queues, external tables, ...; table-bound constraints
-    and internal tables are covered through their tables), and alias UDTs
-    (sys.types), which columns reference by name — a table using one cannot
-    be recreated without its CREATE TYPE."""
-    rows = fetch_rows(cur, """
-        SELECT o.type_desc, o.name FROM sys.objects AS o
-        JOIN sys.schemas AS s ON s.schema_id = o.schema_id
-        WHERE s.name = ? AND o.is_ms_shipped = 0
-            AND o.type NOT IN ('U', 'V', 'P', 'FN', 'IF', 'TF', 'TR',
-                               'SN', 'SO', 'C', 'F', 'PK', 'UQ', 'IT')
-            AND NOT (o.type = 'D' AND o.parent_object_id <> 0)
-        ORDER BY o.type_desc, o.name
-    """, schema)
-    out = [{"name": r[1], "kind": r[0]} for r in rows]
-    alias = fetch_rows(cur, """
-        SELECT ty.name FROM sys.types AS ty
-        JOIN sys.schemas AS s ON s.schema_id = ty.schema_id
-        WHERE s.name = ? AND ty.is_user_defined = 1 AND ty.is_table_type = 0
-        ORDER BY ty.name
-    """, schema)
-    out.extend({"name": r[0], "kind": "ALIAS_TYPE"} for r in alias)
-    return out
-
-
 # ---------------------------------------------------------------- DDL rendering
 
 import re
@@ -611,34 +444,8 @@ PLAIN_IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*$")
 
 
 def ident(name: str) -> str:
-    """Bracket-quote only when the identifier demands it (RF06); ']' doubles
-    inside brackets (QUOTENAME semantics — [a]b] is the WRONG quoting of a]b)."""
-    return name if PLAIN_IDENT.match(name) else "[" + name.replace("]", "]]") + "]"
-
-
-def bq(name: str) -> str:
-    """ALWAYS bracket-quote — for catalog identifiers interpolated into dynamic
-    SQL (census/orphan queries). Catalog-sourced names are still untrusted input
-    to a query string; unconditional QUOTENAME-style quoting is the guard."""
-    return "[" + name.replace("]", "]]") + "]"
-
-
-SAFE_FILENAME = re.compile(r"^(?!\.)[A-Za-z0-9 ._\-]+(?<![ .])$")
-WINDOWS_RESERVED = {"CON", "PRN", "AUX", "NUL",
-                    *(f"COM{i}" for i in range(1, 10)),
-                    *(f"LPT{i}" for i in range(1, 10))}
-
-
-def filename_block_reason(name: str) -> str | None:
-    """Object names go straight into repo paths; a name the filesystem would
-    mangle (path separators, traversal, trailing dot/space, Windows reserved
-    words) surfaces as BLOCKED for a human call — an encoding scheme would
-    hide exactly the weirdness worth seeing."""
-    if not SAFE_FILENAME.match(name):
-        return "name unsafe as a filename"
-    if name.split(".")[0].upper() in WINDOWS_RESERVED:
-        return "Windows-reserved filename"
-    return None
+    """Bracket-quote only when the identifier demands it (RF06)."""
+    return name if PLAIN_IDENT.match(name) else f"[{name}]"
 
 
 TYPE_TOKEN = re.compile(
@@ -708,14 +515,13 @@ def render_column(col: dict) -> str:
     return line
 
 
-def render_table(schema: str, name: str, cols: list[dict], keys: list[dict],
-                 fks: list[dict], checks: list[dict], idxs: list[dict],
-                 description: str | None) -> str:
+def render_table(name: str, cols: list[dict], keys: list[dict], fks: list[dict],
+                 checks: list[dict], idxs: list[dict], description: str | None) -> str:
     lines: list[str] = []
     if description:
         for text_line in description.splitlines():
             lines.append(f"-- {text_line}".rstrip())
-    lines.append(f"CREATE TABLE {ident(schema)}.{ident(name)} (")
+    lines.append(f"CREATE TABLE dbo.{ident(name)} (")
     body: list[str] = []
     for col in cols:
         if col["description"]:
@@ -754,11 +560,11 @@ def render_table(schema: str, name: str, cols: list[dict], keys: list[dict],
         if idx["filter"]:
             # filtered indexes go multi-line: lint expects ON/WHERE each indented
             stmt = (f"\nCREATE {uniq}{kind}INDEX {ident(idx['name'])}\n"
-                    f"    ON {ident(schema)}.{ident(name)} ({collist}){include}\n"
+                    f"    ON dbo.{ident(name)} ({collist}){include}\n"
                     f"    WHERE {normalize_expr(idx['filter'])}")
         else:
             stmt = (f"\nCREATE {uniq}{kind}INDEX {ident(idx['name'])} "
-                    f"ON {ident(schema)}.{ident(name)} ({collist}){include}")
+                    f"ON dbo.{ident(name)} ({collist}){include}")
         lines.append(stmt + ";")
     return "\n".join(lines) + "\n"
 
@@ -786,92 +592,6 @@ def table_fingerprint(name, cols, keys, fks, checks, idxs, description) -> str:
 
 # ---------------------------------------------------------------- subcommands
 
-# Effective database permissions that cannot write. EXECUTE is deliberately
-# NOT here — procedures write. Anything outside this set fails the probe.
-READ_SAFE_PERMS = {
-    "CONNECT", "SELECT", "SHOWPLAN", "AUTHENTICATE",
-    "VIEW DEFINITION", "VIEW DATABASE STATE",
-    "VIEW DATABASE PERFORMANCE STATE", "VIEW DATABASE SECURITY STATE",
-    "VIEW DATABASE SECURITY AUDIT", "VIEW SECURITY DEFINITION",
-    "VIEW ANY COLUMN ENCRYPTION KEY DEFINITION",
-    "VIEW ANY COLUMN MASTER KEY DEFINITION",
-}
-
-
-def cmd_probe(args) -> int:
-    """Fail-closed preflight: prove what the account CAN do before reading
-    anything else. ApplicationIntent=ReadOnly is routing, not protection — on
-    a primary it does not stop INSERT/UPDATE/DDL — so the only honest
-    read-only guarantee is an account whose effective permissions cannot
-    write. fn_my_permissions is diffed against READ_SAFE_PERMS; any surplus
-    fails the run. Proceeding anyway is a HUMAN decision made explicit with
-    --accept-write-risk "<reason>" — recorded in probe.json and belonging in
-    the ledger next to the standing recommendation: get a dedicated read-only
-    login. An empty/failed permission read also fails: inconclusive = failed."""
-    conn = connect()
-    cur = conn.cursor()
-    version, edition, database = fetch_rows(cur, """
-        SELECT CONVERT(NVARCHAR(128), SERVERPROPERTY('ProductVersion')),
-               CONVERT(NVARCHAR(128), SERVERPROPERTY('Edition')), DB_NAME()
-    """)[0]
-    perms = sorted({r[0].upper() for r in fetch_rows(
-        cur, "SELECT permission_name FROM fn_my_permissions(NULL, 'DATABASE')")})
-    schemas = fetch_rows(cur, """
-        SELECT s.name, COUNT(o.object_id) FROM sys.schemas AS s
-        LEFT JOIN sys.objects AS o
-            ON o.schema_id = s.schema_id AND o.is_ms_shipped = 0
-        WHERE s.name NOT IN ('sys', 'guest', 'INFORMATION_SCHEMA')
-            AND s.name NOT LIKE 'db[_]%'
-        GROUP BY s.name ORDER BY COUNT(o.object_id) DESC, s.name
-    """)
-    conn.close()
-
-    write_capable = [p for p in perms if p not in READ_SAFE_PERMS]
-    out = {
-        "generated_at": datetime.now(timezone.utc).isoformat(),
-        "server_version": version, "edition": edition, "database": database,
-        "permissions": perms, "write_capable": write_capable,
-        "schemas": {name: count for name, count in schemas},
-    }
-    if args.accept_write_risk:
-        out["write_risk_accepted"] = args.accept_write_risk
-    SCRATCH.mkdir(parents=True, exist_ok=True)
-    PROBE.write_text(json.dumps(out, indent=2), encoding="utf-8")
-
-    print(f"probe: SQL Server {version} ({edition}), database [{database}] "
-          f"-> {PROBE.relative_to(REPO)}")
-    print("non-system schemas (by object count):")
-    for name, count in schemas:
-        print(f"  {count:5d}  {name}")
-    if not perms:
-        print("probe: FAIL — could not read effective permissions "
-              "(inconclusive probe = failed probe)")
-        return 1
-    if write_capable:
-        # summarize, don't dump: 90 permissions in one line bury the story.
-        # The headline perms tell it; the full list is in probe.json.
-        headline = [p for p in ("CONTROL", "TAKE OWNERSHIP", "INSERT", "UPDATE",
-                                "DELETE", "ALTER", "EXECUTE", "CREATE TABLE",
-                                "BACKUP DATABASE") if p in write_capable]
-        if not headline:
-            headline = write_capable[:5]
-        rest = len(write_capable) - len(headline)
-        print(f"probe: this account can WRITE — {len(write_capable)} "
-              f"permission(s) outside the read-safe set, e.g. "
-              + ", ".join(headline)
-              + (f" (+{rest} more, full list in probe.json)" if rest else ""))
-        if args.accept_write_risk:
-            print(f"  proceeding on explicit override: {args.accept_write_risk}")
-            print("  record the reason in the ledger")
-            return 0
-        print('probe: PAUSED — the provided credential is write-capable. '
-              'Acceptance unlocks it: re-run with --accept-write-risk '
-              '"<reason>" (recorded in probe.json; note it in the ledger).')
-        return 1
-    print(f"probe: OK — read-only account ({len(perms)} permission(s))")
-    return 0
-
-
 def build_inventory(schema: str) -> dict:
     conn = connect()
     cur = conn.cursor()
@@ -888,7 +608,6 @@ def build_inventory(schema: str) -> dict:
     sequences = read_sequences(cur, schema)
     synonyms = read_synonyms(cur, schema)
     table_types = read_table_types(cur, schema)
-    uncovered = read_uncovered(cur, schema)
     conn.close()
 
     # object classes outside sys.objects' module/table types
@@ -902,7 +621,6 @@ def build_inventory(schema: str) -> dict:
     inv_objects = []
     for obj in objects:
         name, otype = obj["name"], obj["type"]
-        blocked = filename_block_reason(name)
         if otype == "U":
             fp = table_fingerprint(name, cols.get(name, []), keys.get(name, []),
                                    fks.get(name, []), checks.get(name, []),
@@ -910,25 +628,12 @@ def build_inventory(schema: str) -> dict:
             depends = sorted({fk["ref_table"] for fk in fks.get(name, [])
                               if fk["ref_table"] != name})
             target = f"dbkit/schema/tables/{name}.sql"
-            odd = [i for i in idxs.get(name, [])
-                   if i["type"] not in KNOWN_INDEX_TYPES]
-            if blocked is None and odd:
-                blocked = (f"index {odd[0]['name']} is {odd[0]['type']} — the "
-                           "renderer only carves (NON)CLUSTERED; extend it or "
-                           "record an exception")
         elif otype in ("SO", "SN", "TT"):
             fp = sha(json.dumps(obj["_payload"], sort_keys=True, default=str))
             depends = []
             target = f"dbkit/schema/native/tsql/{MODULE_KIND_DIR[otype]}/{name}.sql"
         else:
-            definition = modules[name]["definition"]
-            if definition is None:
-                # sys.sql_modules.definition is NULL for WITH ENCRYPTION —
-                # unfaithful to carve, wrong to crash, worse to skip silently
-                fp = "unavailable"
-                blocked = blocked or "definition unavailable (WITH ENCRYPTION?)"
-            else:
-                fp = sha(definition)
+            fp = sha(modules[name]["definition"])
             depends = deps.get(name, [])
             if otype == "TR":
                 parent = trigger_parents.get(name)
@@ -936,36 +641,17 @@ def build_inventory(schema: str) -> dict:
                     depends = [parent] + depends
             kind = MODULE_KIND_DIR[otype]
             target = f"dbkit/schema/native/tsql/{kind}/{name}.sql"
-        entry = {"schema": schema, "name": name, "type": otype,
-                 "fingerprint": fp, "depends_on": depends, "target": target}
-        if blocked:
-            entry["blocked"] = blocked
-        inv_objects.append(entry)
-
-    # case-insensitive target collisions: on a case-preserving filesystem
-    # (Windows/macOS) two such files silently merge into one — every party
-    # to a collision becomes BLOCKED for a human naming decision
-    by_folded: dict[str, list[dict]] = {}
-    for entry in inv_objects:
-        by_folded.setdefault(entry["target"].lower(), []).append(entry)
-    for group in by_folded.values():
-        if len(group) > 1:
-            names = ", ".join(f"{e['type']} {e['name']}" for e in group)
-            for e in group:
-                e.setdefault("blocked",
-                             f"target collides case-insensitively ({names})")
+        inv_objects.append({"schema": schema, "name": name, "type": otype,
+                            "fingerprint": fp, "depends_on": depends,
+                            "target": target})
     # "_catalog" carries the full column/constraint/module payloads so carve can
     # render without reconnecting. inventory/reconcile pop it before persisting:
-    # the persisted baseline needs only fingerprints, and definitions may hold
+    # the committed baseline needs only fingerprints, and definitions may hold
     # things that don't belong in a JSON dump kept around (routine source bulk).
-    # The baseline lives under .scratch/ — gitignored ON PURPOSE (object names
-    # and metadata stay out of git history); it is working state, not disposable:
-    # losing it means re-running `inventory`, which MOVES the drift reference.
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "schema": schema,
         "objects": inv_objects,
-        "uncovered": uncovered,
         "_catalog": {"cols": cols, "keys": keys, "fks": fks, "checks": checks,
                      "idxs": idxs, "descriptions": descriptions,
                      "modules": modules, "sequences": sequences,
@@ -985,12 +671,6 @@ def cmd_inventory(args) -> int:
           f"-> {INVENTORY.relative_to(REPO)}")
     for t, n in sorted(counts.items(), key=lambda kv: -kv[1]):
         print(f"  {t}: {n}")
-    for obj in inv["objects"]:
-        if "blocked" in obj:
-            print(f"  BLOCKED {obj['type']} {obj['name']}: {obj['blocked']}")
-    for u in inv["uncovered"]:
-        print(f"  UNCOVERED {u['kind']} {u['name']} — object class this tool "
-              "does not carve")
     return 0
 
 
@@ -998,69 +678,38 @@ def render_object(obj: dict, cat: dict) -> str:
     """One object's DDL as carve would write it — shared by carve (to write the
     file) and reconcile (to tell an APPLIED migration from a truly NEW object
     by comparing this rendering with the carved file's content)."""
-    name, otype, schema = obj["name"], obj["type"], obj["schema"]
+    name, otype = obj["name"], obj["type"]
     if otype == "U":
-        return render_table(schema, name, cat["cols"].get(name, []),
+        return render_table(name, cat["cols"].get(name, []),
                             cat["keys"].get(name, []), cat["fks"].get(name, []),
                             cat["checks"].get(name, []), cat["idxs"].get(name, []),
                             cat["descriptions"].get(name))
     if otype == "SO":
-        return render_sequence(schema, name, cat["sequences"][name])
+        return render_sequence(name, cat["sequences"][name])
     if otype == "SN":
-        return render_synonym(schema, name, cat["synonyms"][name])
+        return render_synonym(name, cat["synonyms"][name])
     if otype == "TT":
-        return render_table_type(schema, name, cat["table_types"][name])
-    # normalize CRLF/CR to LF: repo files are LF, and the STALE comparison
-    # reads files with universal newlines — a CRLF rendering can never match
+        return render_table_type(name, cat["table_types"][name])
     definition = cat["modules"][name]["definition"]
-    definition = definition.replace("\r\n", "\n").replace("\r", "\n")
     if not definition.endswith("\n"):
         definition += "\n"
     return definition
 
 
-def load_exceptions() -> dict[str, dict]:
-    """.scratch/adoption/exceptions.json — the HUMAN decisions carve/reconcile
-    consume: [{"name": ..., "status": "excluded"|"blocked", "reason": ...},
-    ...]; an optional "type" narrows an entry to one object class. This is the
-    mechanized half of the skill's exception rule: a reasoned entry exempts
-    the object from reconcile findings, and reconcile flags malformed entries
-    (missing reason, unknown status) instead of honoring them."""
-    if not EXCEPTIONS.exists():
-        return {}
-    return {e["name"]: e for e in
-            json.loads(EXCEPTIONS.read_text(encoding="utf-8"))}
-
-
-def exception_for(exceptions: dict[str, dict], otype: str, name: str) -> dict | None:
-    e = exceptions.get(name)
-    if e and ("type" not in e or e["type"] == otype):
-        return e
-    return None
-
-
 def cmd_carve(args) -> int:
     inv = build_inventory(args.schema)
     cat = inv.pop("_catalog")
-    exceptions = load_exceptions()
     only = set(args.objects.split(",")) if args.objects else None
     TABLES_DIR.mkdir(parents=True, exist_ok=True)
-    written = skipped = 0
+    written = 0
     for obj in inv["objects"]:
         if only and obj["name"] not in only:
-            continue
-        exc = exception_for(exceptions, obj["type"], obj["name"])
-        if "blocked" in obj or (exc and exc.get("status") in ("excluded", "blocked")):
-            reason = obj.get("blocked") or exc.get("reason", "(no reason)")
-            print(f"  skip {obj['type']} {obj['name']}: {reason}")
-            skipped += 1
             continue
         path = REPO / obj["target"]
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(render_object(obj, cat), encoding="utf-8", newline="\n")
         written += 1
-    print(f"carved {written} object(s)"
-          + (f", skipped {skipped} (blocked/excepted)" if skipped else ""))
+    print(f"carved {written} object(s)")
     return 0
 
 
@@ -1081,46 +730,22 @@ def cmd_reconcile(args) -> int:
     #   DROPPED     baseline object gone from the DB -> dropped outside the repo
     #               (or by an applied contract migration); align repo + model
     #   MISSING     baseline object with no carved file -> extraction hole
-    #   STALE       fingerprint stable but the carved file's content differs
-    #               from the live rendering -> hand-edited, corrupted, or the
-    #               renderer evolved; "file exists" is not "file faithful"
-    #   BLOCKED     object the tool cannot carve faithfully (encrypted module,
-    #               unsupported class or index type, unsafe filename) and no
-    #               exceptions entry covers it -> extend the tool or decide
     #   UNDEPLOYED  repo file with no live object and no baseline -> designed
     #               here, migration not applied yet. Expected intermediate
     #               state -> reported as a warning, does NOT fail the run
     #               (verifying deployment is dbverify's future job).
-    # Objects covered by a well-formed exceptions.json entry (excluded/blocked
-    # + non-empty reason) are exempted and counted; malformed entries are
-    # themselves problems. Identity is (type, name) — a table and a table
-    # type may legally share a name.
     if not INVENTORY.exists():
         sys.exit(f"no {INVENTORY.relative_to(REPO)} — run `extract_tsql.py inventory` first")
-    recorded = {(o["type"], o["name"]): o for o in
+    recorded = {o["name"]: o for o in
                 json.loads(INVENTORY.read_text(encoding="utf-8"))["objects"]}
     live = build_inventory(args.schema)
     cat = live.pop("_catalog")
-    live_objs = {(o["type"], o["name"]): o for o in live["objects"]}
-    exceptions = load_exceptions()
+    live_objs = {o["name"]: o for o in live["objects"]}
 
     problems: list[str] = []
     warnings: list[str] = []
-    exempt = 0
-    for e in exceptions.values():
-        if e.get("status") not in ("excluded", "blocked") or not e.get("reason"):
-            problems.append(f"exceptions.json entry {e.get('name')!r}: needs "
-                            'status "excluded"|"blocked" and a non-empty reason')
-
-    for (otype, name), obj in live_objs.items():
-        exc = exception_for(exceptions, otype, name)
-        if exc and exc.get("status") in ("excluded", "blocked") and exc.get("reason"):
-            exempt += 1
-            continue
-        if "blocked" in obj:
-            problems.append(f"BLOCKED {otype} {name}: {obj['blocked']}")
-            continue
-        rec = recorded.get((otype, name))
+    for name, obj in live_objs.items():
+        rec = recorded.get(name)
         if rec is None:
             target = REPO / obj["target"]
             if (target.exists()
@@ -1131,40 +756,20 @@ def cmd_reconcile(args) -> int:
             else:
                 problems.append(f"NEW in source, absent from inventory: {name}")
             continue
-        drifted = rec["fingerprint"] != obj["fingerprint"]
-        if drifted:
+        if rec["fingerprint"] != obj["fingerprint"]:
             problems.append(f"DRIFT since extraction: {name}")
         target = REPO / rec["target"]
         if not target.exists():
             problems.append(f"MISSING carved file: {rec['target']} ({name})")
-        elif (not drifted
-                and target.read_text(encoding="utf-8") != render_object(obj, cat)):
-            # only meaningful under a stable fingerprint: with drift the live
-            # rendering legitimately left the file behind — DRIFT already fired
-            problems.append(f"STALE carved file: {rec['target']} — content "
-                            "differs from the live rendering (hand-edited, "
-                            "corrupted, or renderer evolved); decide direction, "
-                            "then re-carve")
-    for (otype, name) in recorded:
-        if ((otype, name) not in live_objs
-                and not exception_for(exceptions, otype, name)):
+    for name in recorded:
+        if name not in live_objs:
             problems.append(f"DROPPED from source since inventory: {name}")
-
-    # object classes the tool does not carve: honest coverage means each one
-    # is either an exceptions entry (human decision) or a failing finding
-    for u in live.get("uncovered", []):
-        if not exception_for(exceptions, u["kind"], u["name"]):
-            problems.append(f"BLOCKED {u['kind']} {u['name']}: object class not "
-                            "carved by this tool — extend it or record an "
-                            "exception")
 
     # repo -> DB direction: a carved/designed file whose object exists nowhere
     # in the live catalog nor in the baseline is a migration still in flight
-    live_names = {name for _, name in live_objs}
-    recorded_names = {name for _, name in recorded}
     for path in sorted(list(TABLES_DIR.glob("*.sql")) + list(NATIVE_DIR.rglob("*.sql"))):
         name = path.stem
-        if name not in live_names and name not in recorded_names:
+        if name not in live_objs and name not in recorded:
             warnings.append(f"UNDEPLOYED: {path.relative_to(REPO)} — no live object "
                             "(pending migration?)")
 
@@ -1177,8 +782,7 @@ def cmd_reconcile(args) -> int:
             print(f"  {p}")
         return 1
     print(f"reconcile: OK — {len(live_objs)} objects, every fingerprint stable, "
-          "every carved file present and faithful"
-          + (f"; {exempt} exception(s) honored" if exempt else "")
+          "every carved file present"
           + (f"; {len(warnings)} undeployed file(s) pending" if warnings else ""))
     return 0
 
@@ -1255,104 +859,6 @@ def find_implied_fks(cur, schema: str,
     return implied
 
 
-def count_orphans(cur, schema: str, tbl: str, col: str, ref: str, ref_col: str):
-    """COUNT of child rows whose non-null value misses the referenced column.
-    Returns int, or the error text when uncountable (type mismatch etc. — a
-    finding to record, not a crash)."""
-    try:
-        cur.execute(
-            f"SELECT COUNT(*) FROM {bq(schema)}.{bq(tbl)} AS c "
-            f"LEFT JOIN {bq(schema)}.{bq(ref)} AS p ON p.{bq(ref_col)} = c.{bq(col)} "
-            f"WHERE c.{bq(col)} IS NOT NULL AND p.{bq(ref_col)} IS NULL")
-        return int(cur.fetchone()[0])
-    except Exception as exc:
-        return f"uncountable: {exc}"
-
-
-def parse_candidate_edges(path: Path) -> list[tuple[str, str, str, str]]:
-    """JSON array of "table.column -> ref_table[.ref_column]" strings — FK
-    candidates from OUTSIDE the tool's own name matching: ORM joins excavated
-    from application code, or agent hypotheses over cryptic names that defeat
-    name-implication. ref_column defaults to column. The census only COUNTS
-    these; deciding what a violated candidate means stays with the grill."""
-    edges = []
-    for entry in json.loads(path.read_text(encoding="utf-8")):
-        left, _, right = entry.partition("->")
-        tbl, _, col = left.strip().partition(".")
-        ref, _, ref_col = right.strip().partition(".")
-        if not (tbl and col and ref):
-            raise SystemExit(f"bad candidate edge: {entry!r} "
-                             '(want "table.column -> ref_table[.ref_column]")')
-        edges.append((tbl, col, ref, ref_col or col))
-    return edges
-
-
-def census_tables_without_pk(cur, schema: str, row_counts: dict[str, int]) -> dict:
-    """Tables whose identity is undeclared — the classic legacy adversity
-    ("PK declarations dropped during bulk-load optimizations"). Without this,
-    a heap sails through adoption and its per-table block cannot state
-    identity, the first invariant of any table. For each such table, name ONE
-    candidate key — a declared single-column unique index wins; else an id-ish
-    column name; else the first ordinal column (PKs overwhelmingly sit at
-    position 1) — and count its duplicates and nulls. Counts size the gap;
-    whether the candidate IS the identity is a grill decision."""
-    with_pk = {r[0] for r in fetch_rows(cur, """
-        SELECT t.name FROM sys.key_constraints AS kc
-        JOIN sys.tables AS t ON t.object_id = kc.parent_object_id
-        JOIN sys.schemas AS s ON s.schema_id = t.schema_id
-        WHERE s.name = ? AND kc.type = 'PK'
-    """, schema)}
-    unique_single = fetch_rows(cur, """
-        SELECT t.name, c.name FROM sys.indexes AS i
-        JOIN sys.tables AS t ON t.object_id = i.object_id
-        JOIN sys.schemas AS s ON s.schema_id = t.schema_id
-        JOIN sys.index_columns AS ic
-            ON ic.object_id = i.object_id AND ic.index_id = i.index_id
-        JOIN sys.columns AS c
-            ON c.object_id = ic.object_id AND c.column_id = ic.column_id
-        WHERE s.name = ? AND i.is_unique = 1 AND ic.is_included_column = 0
-            AND (SELECT COUNT(*) FROM sys.index_columns AS ic2
-                 WHERE ic2.object_id = i.object_id AND ic2.index_id = i.index_id
-                     AND ic2.is_included_column = 0) = 1
-    """, schema)
-    uniq_by_tbl: dict[str, str] = {}
-    for tbl, col in unique_single:
-        uniq_by_tbl.setdefault(tbl, col)
-
-    ordered = fetch_rows(cur, """
-        SELECT t.name, c.name FROM sys.columns AS c
-        JOIN sys.tables AS t ON t.object_id = c.object_id
-        JOIN sys.schemas AS s ON s.schema_id = t.schema_id
-        WHERE s.name = ? ORDER BY t.name, c.column_id
-    """, schema)
-    by_tbl: dict[str, list[str]] = {}
-    for tbl, col in ordered:
-        by_tbl.setdefault(tbl, []).append(col)
-
-    out: dict = {}
-    for tbl, columns in by_tbl.items():
-        if tbl in with_pk:
-            continue
-        unique_col = uniq_by_tbl.get(tbl)
-        cand = (unique_col
-                or next((c for c in columns if c.upper().startswith("ID")
-                         or c.upper().endswith("ID")), columns[0]))
-        entry: dict = {"rows": row_counts.get(tbl, 0),
-                       "unique_index_on": unique_col, "candidate": cand}
-        if entry["rows"]:
-            try:
-                cur.execute(
-                    f"SELECT COUNT({bq(cand)}) - COUNT(DISTINCT {bq(cand)}), "
-                    f"COUNT(*) - COUNT({bq(cand)}) FROM {bq(schema)}.{bq(tbl)}")
-                dup, nul = cur.fetchone()
-                entry["candidate_duplicates"] = int(dup)
-                entry["candidate_nulls"] = int(nul)
-            except Exception as exc:
-                entry["candidate_duplicates"] = f"uncountable: {exc}"
-        out[tbl] = entry
-    return out
-
-
 def cmd_census(args) -> int:
     """Reality census — read-only aggregates only. Counts and cardinalities expose
     scale, never values (raw values require classification first — see the skill)."""
@@ -1378,27 +884,21 @@ def cmd_census(args) -> int:
     implied = find_implied_fks(cur, schema, candidates)
     print(f"implied FK candidates (no constraint behind them): {len(implied)}")
 
-    orphans: dict[str, int | str] = {}
+    orphans: dict[str, int] = {}
     for tbl, col, ref in implied:
-        orphans[f"{tbl}.{col} -> {ref}"] = count_orphans(cur, schema, tbl, col, ref, col)
+        try:
+            cur.execute(
+                f"SELECT COUNT(*) FROM {schema}.[{tbl}] AS c "
+                f"LEFT JOIN {schema}.[{ref}] AS p ON p.[{col}] = c.[{col}] "
+                f"WHERE c.[{col}] IS NOT NULL AND p.[{col}] IS NULL")
+            n = cur.fetchone()[0]
+        except Exception as exc:  # type mismatch etc. — a finding, not a crash
+            orphans[f"{tbl}.{col} -> {ref}"] = f"uncountable: {exc}"
+            continue
+        orphans[f"{tbl}.{col} -> {ref}"] = int(n)
     out["implied_fk_orphans"] = orphans
     violated = {k: v for k, v in orphans.items() if isinstance(v, int) and v > 0}
     print(f"implied FKs with orphans: {len(violated)}")
-
-    if getattr(args, "candidates", None):
-        supplied = parse_candidate_edges(Path(args.candidates))
-        ext: dict[str, int | str] = {}
-        for tbl, col, ref, ref_col in supplied:
-            ext[f"{tbl}.{col} -> {ref}.{ref_col}"] = count_orphans(
-                cur, schema, tbl, col, ref, ref_col)
-        out["candidate_fk_orphans"] = ext
-        ext_violated = {k: v for k, v in ext.items() if isinstance(v, int) and v > 0}
-        print(f"supplied candidate edges: {len(supplied)}, "
-              f"{len(ext_violated)} with orphans")
-
-    no_pk = census_tables_without_pk(cur, schema, out["row_counts"])
-    out["tables_without_pk"] = no_pk
-    print(f"tables without a declared PK: {len(no_pk)}")
 
     enumish = [(t, c) for t, c in candidates if ENUMISH.search(c)]
     cards: dict[str, int] = {}
@@ -1406,7 +906,7 @@ def cmd_census(args) -> int:
         if out["row_counts"].get(tbl, 0) == 0:
             continue
         try:
-            cur.execute(f"SELECT COUNT(DISTINCT {bq(col)}) FROM {bq(schema)}.{bq(tbl)}")
+            cur.execute(f"SELECT COUNT(DISTINCT [{col}]) FROM {schema}.[{tbl}]")
             cards[f"{tbl}.{col}"] = int(cur.fetchone()[0])
         except Exception:
             continue
@@ -1606,24 +1106,14 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--schema", default="dbo")
     sub = parser.add_subparsers(dest="command", required=True)
-    probe = sub.add_parser("probe")
-    probe.add_argument(
-        "--accept-write-risk", metavar="REASON",
-        help="explicit human override for a write-capable account; the reason "
-             "is recorded in probe.json and belongs in the ledger")
     sub.add_parser("inventory")
     carve = sub.add_parser("carve")
     carve.add_argument("--objects", help="comma-separated object names (a batch)")
     sub.add_parser("reconcile")
-    census = sub.add_parser("census")
-    census.add_argument(
-        "--candidates",
-        help='JSON file: ["table.column -> ref_table[.ref_column]", ...] — '
-             "extra FK candidates (code-excavated, agent-hypothesized) to "
-             "orphan-count alongside the name-implied ones")
+    sub.add_parser("census")
     sub.add_parser("discover")
     args = parser.parse_args()
-    return {"probe": cmd_probe, "inventory": cmd_inventory, "carve": cmd_carve,
+    return {"inventory": cmd_inventory, "carve": cmd_carve,
             "reconcile": cmd_reconcile, "census": cmd_census,
             "discover": cmd_discover}[args.command](args)
 
