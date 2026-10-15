@@ -1,0 +1,19 @@
+# Porting the extractor
+
+The disclosed branch of step 4 in [`SKILL.md`](SKILL.md), reached when no reference in `scripts/` covers the source engine. The skill ships one extractor on purpose; every other engine is a port this adoption builds. The **PORTING CONTRACT** in the reference's docstring is the source of truth for *what* a port honours — CLI, outputs, finding classes, fingerprint semantics, safety rules — and what it rewrites (connection, catalog reads, DDL rendering, census queries). This file is *how* to build one.
+
+A port is a subproject of its own, built by **trial and error against the live database**: write a slice, run it, read what the engine answers, fix, run again. A port that has only been written is a draft; a port that has reconciled the live database is a tool. Build it as `db-schema/tools/extract_<source-dialect>.py`, starting its changelog at `1.0.0`. The skill's `scripts/` stays read-only throughout.
+
+## The sequence
+
+Each step is done only when its check holds against the user's real database, under the read-only standing rule.
+
+1. **Connection and probe first.** Port `connect()` and `probe` before any other subcommand: until the probe runs, the read-only guarantee is unproven, and nothing else touches the database. Write the engine's read-safe privilege list explicitly in the code, with the documentation it came from (role attributes and grants, session privileges, `SHOW GRANTS` — whatever the engine exposes), and keep the probe fail-closed: a privilege outside the list pauses the run for the user's acceptance. The driver is a declared dependency: the port names it with its exact install command and fails loudly when it is missing, as the reference does; install it the project's way (its virtual environment when it has one), and ask before installing into a shared interpreter. Done when the probe classifies the user's real account and writes `probe.json`.
+2. **The object-class census.** From the engine's own documentation, list every object class it supports — the contract's examples are a start, never the list (packages and bodies, materialized views, sequences, synonyms, user-defined types, extensions, rules, partitions, database links, …). Done when every class is either read by `inventory` or reported `BLOCKED` with its reason — a class missing from both is the silent omission the contract forbids.
+3. **The reconcile loop.** Port `inventory`, `carve`, and `reconcile`, then iterate: carve → reconcile → read the failure → fix the catalog read or the renderer → carve again. Fingerprints hash the normalized catalog shape, so a renderer fix never fakes drift; a `STALE` finding after a renderer change means re-carve, a `DRIFT` means the catalog read is unstable — fix the read. Done when reconcile against the live database reports no failure outside recorded exceptions and `python db-schema/tools/verify.py` is green — this is the proof the port works.
+4. **Census and discover.** Port their queries, aggregates only, catalog identifiers engine-quoted before interpolation. Done when both run to completion on the live database and write their JSON in the contract's shape.
+5. **The kit.** The tools beside the port (`verify.py`, `buildsql.py`, the linter config) read the canonical dialect from `db-schema/.sqlfluff`; when one of them fails on the new dialect, adjust it in the project and note why. Done when `verify.py` runs every stage it has for this dialect.
+
+## Closing the port
+
+Record in the ledger what the port covers and what it reports `BLOCKED`, and report the port as a **harvest candidate** in the hand-off: version, changelog, the engine and version it was proven against. A maintainer decides, outside the run, whether it joins the skill's references.

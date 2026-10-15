@@ -17,15 +17,19 @@ The subcommands form the adoption loop; each consumes the previous one's output:
               write-capable account is a real risk, not a formality. Proceeding
               anyway is a HUMAN decision made explicit with
               --accept-write-risk "<reason>" and recorded in the ledger.
-  inventory   snapshot the catalog into .scratch/adoption/inventory.json — every
-              object in the adopted schema with a definition FINGERPRINT (short
-              sha256 of its normalized shape) and its dependency edges. This
-              file is the "as extracted" baseline that reconcile diffs against;
-              re-running it MOVES the baseline, so only do that deliberately.
+  inventory   snapshot the catalog into db-schema/baseline/inventory.<schema>.json
+              (versioned; one file per adopted schema) — every object with a
+              definition FINGERPRINT (short sha256 of its normalized shape) and
+              its dependency edges, plus a content hash of every table listed
+              in db-schema/baseline/watched-data.json (parameters of protected
+              rules; rows never leave the process, only count + sha256 are
+              kept). This file is the "as last absorbed" baseline reconcile
+              diffs against; re-running it MOVES the baseline, so only do that
+              deliberately — and never while a finding awaits a human.
   carve       render each object's DDL into the repo: tables ->
-              dbkit/schema/tables/<name>.sql; views/functions/procedures/
+              db-schema/schema/tables/<name>.sql; views/functions/procedures/
               triggers and support objects (sequences, synonyms, table types) ->
-              dbkit/schema/native/tsql/<kind>/<name>.sql.
+              db-schema/schema/native/tsql/<kind>/<name>.sql.
               --objects name1,name2 restricts to a batch. carve re-reads the
               live catalog (it does not render from the baseline); if the DB
               changed since `inventory`, reconcile reports the drift.
@@ -45,9 +49,13 @@ The subcommands form the adoption loop; each consumes the previous one's output:
                 BLOCKED   object the tool cannot carve faithfully (encrypted
                           module, unsupported object class or index type,
                           unsafe filename) with no exceptions entry covering it
+                DATA-DRIFT  a watched table's content hash changed — a
+                          protected rule's parameter changed outside the repo
                 UNDEPLOYED  repo file with no live object — a migration still
                           in flight (warning only, does not fail)
-              reconcile consumes .scratch/adoption/exceptions.json — the human
+              Without --schema, reconcile covers every schema that has a
+              baseline file.
+              reconcile consumes db-schema/baseline/exceptions.json — the human
               decisions (objects `excluded` or `blocked`, each with a
               non-empty reason) — and exempts covered objects instead of
               reporting them; an entry without a reason is itself a finding.
@@ -63,7 +71,7 @@ The subcommands form the adoption loop; each consumes the previous one's output:
               any provenance (code excavation, agent hypothesis) to the orphan
               count — the census tests candidates, it does not only generate
               them. Aggregates only, never row values; feeds the gap sections
-              of dbkit/model/database.md.
+              of docs/db-model/database.md.
   discover    DB-to-Domain discovery — rank tables by structural relevance
               (referencing tables + referencing modules dominate; row count is
               tiebreaker only), classify their structural role (junction,
@@ -82,22 +90,27 @@ universal extractor). Porting to another engine means a sibling implementation
 named `extract_<source-dialect>.py` (the engine of the adopted database) that
 keeps the contract below and rewrites the engine layer; extract the common
 interface only when a second engine exists, never before. `verify.py --live`
-discovers the tool by glob (`dbkit/tools/extract_*.py`) — no hardcoded name.
+discovers the tool by glob (`db-schema/tools/extract_*.py`) — no hardcoded name.
 
 Stable contract (what every port must honor):
   - CLI: the six subcommands (probe / inventory / carve / reconcile / census /
     discover), `--schema`, `--objects` for carve batches;
     exit 0 = clean, exit 1 = findings (probe, reconcile) / failure.
-  - Outputs: .scratch/adoption/inventory.json with objects[] each carrying
-    {schema, name, type, fingerprint, depends_on, target} (+ optional
-    blocked reason); .scratch/adoption/probe.json with version / permissions /
+  - Outputs: db-schema/baseline/inventory.<schema>.json (versioned, one per
+    schema, deterministic: objects sorted by (type, name), no timestamp) with
+    objects[] each carrying {schema, name, type, fingerprint, depends_on,
+    target} (+ optional blocked reason) and watched_data {table: {rule, rows,
+    sha256}} for the tables db-schema/baseline/watched-data.json lists;
+    db-schema/baseline/exceptions.json read (human decisions, versioned);
+    .scratch/adoption/probe.json (local) with version / permissions /
     write_capable / schemas; .scratch/adoption/census.json with row_counts /
     implied_fk_orphans / enumish_cardinality / tables_without_pk /
     candidate_fk_orphans (plus engine equivalents of untrusted constraints).
   - Object identity is (type, name) within a schema — never name alone
     (engines let a table and a table type share a name).
   - reconcile finding classes and their semantics: DRIFT, NEW, APPLIED,
-    DROPPED, MISSING, STALE, BLOCKED (failures) and UNDEPLOYED (warning) —
+    DROPPED, MISSING, STALE, BLOCKED, DATA-DRIFT (failures) and UNDEPLOYED
+    (warning) —
     see cmd_reconcile; exceptions.json entries (excluded/blocked + reason)
     exempt objects mechanically.
   - Fingerprint semantics: hash of the normalized CATALOG shape, not of
@@ -111,10 +124,10 @@ Stable contract (what every port must honor):
   - Coverage honesty: object classes or features the renderer cannot carve
     faithfully become BLOCKED findings, never silent omissions.
   - Carve targets follow the repo layout, whose rules live in the READMEs:
-    dbkit/schema/tables/README.md (one table per file, comments preserved),
-    dbkit/schema/native/README.md (N3: one subfolder per dialect, one per
-    kind), dbkit/schema/README.md (N1/N2/N3 split), and the model docs the
-    adoption populates per dbkit/model/README.md (skeleton, materiality rule).
+    db-schema/schema/tables/README.md (one table per file, comments preserved),
+    db-schema/schema/native/README.md (N3: one subfolder per dialect, one per
+    kind), db-schema/schema/README.md (N1/N2/N3 split), and the model docs the
+    adoption populates per docs/db-model/README.md (skeleton, materiality rule).
 
 Engine layer (rewrite per engine, everything else stays):
   connect(), the read_* catalog functions, render_* / normalize_expr / ident
@@ -126,16 +139,65 @@ Engine layer (rewrite per engine, everything else stays):
 
 VERSIONING — `__version__` below and this changelog move together: bump both on
 every behavior change. A reference copy of this file ships with the
-database-adoption skill (`.claude/skills/database-adoption/scripts/`); at the
-start of an adoption the skill compares versions name-to-name:
-  repo copy newer  -> harvest the evolution back into the skill's reference
-                      (the skill learns across projects);
+database-adoption skill (`.claude/skills/database-adoption/scripts/`). That
+reference is READ-ONLY while an adoption runs: the run evolves only the repo
+copy. At the start of an adoption the skill compares versions name-to-name:
+  repo copy newer  -> keep using the repo copy; report the divergence so a
+                      maintainer harvests it into the reference OUTSIDE any
+                      adoption run (the skill learns across projects);
   skill newer      -> upgrade the repo copy;
   equal            -> nothing to do.
 The changelog is what makes that merge informed — a version number says THAT
 something diverged, the changelog says WHAT.
 
 CHANGELOG:
+  2.4.0  objects outside the default schema (dbo) carve to schema-prefixed
+         files — db-schema/schema/tables/<schema>.<name>.sql, and the same
+         under native/ — so two adopted schemas never share a file; objects in
+         dbo keep their bare names (no existing repo changes). The file stem
+         is the object's qualified name, which the kit tools read the same way.
+         A name containing '.' is BLOCKED (ambiguous with the prefix).
+         UNDEPLOYED is judged per schema from the file's prefix, by target
+         path. Upgrading a repo that carved a non-dbo schema flat: re-carve
+         those objects, then delete the old flat files (git mv keeps history).
+  2.3.0  the baseline becomes versioned, per-schema governed state:
+         - inventory writes db-schema/baseline/inventory.<schema>.json
+           (was the single, gitignored .scratch/adoption/inventory.json): a
+           second schema no longer overwrites the first's baseline, and a
+           fresh clone or CI keeps the drift reference instead of re-running
+           inventory over drift. Deterministic output (sorted, no timestamp)
+           so a baseline move is a reviewable diff.
+         - exceptions move to db-schema/baseline/exceptions.json (human
+           decisions travel with the repo); an optional "schema" field
+           narrows an entry, like "type".
+         - watched data: tables listed in db-schema/baseline/watched-data.json
+           ([{"schema", "table", "rule"}]) get a content hash (order-
+           independent sha256 + row count; rows never printed or persisted);
+           reconcile reports DATA-DRIFT when it changes — a protected rule's
+           parameter edited in the live DB is no longer invisible.
+         - reconcile without --schema covers every baselined schema; the
+           pre-2.3.0 .scratch files are still read, with a note to move them.
+         - carve targets colliding across schemas (same object name) become
+           BLOCKED instead of overwriting each other's file.
+  2.2.1  two false stops from the first SQL Server 2022 adoption with a plain
+         read-only login (SELECT + VIEW DEFINITION):
+         - probe: READ_SAFE_PERMS learns VIEW PERFORMANCE DEFINITION and VIEW
+           CRYPTOGRAPHICALLY SECURED DEFINITION — 2022 splits VIEW DEFINITION
+           into granular children, so a plain grant surfaced them and the
+           write-risk gate fired on a read-only account.
+         - census/discover: read_row_counts falls back to COUNT_BIG(*) per
+           table when sys.dm_db_partition_stats is denied (VIEW DATABASE
+           PERFORMANCE STATE missing), instead of failing the subcommand.
+         - VERSIONING: the skill's reference is read-only during an adoption;
+           harvesting a newer repo copy happens outside the run.
+  2.2.0  the kit is `db-schema/` and the model docs left it for `docs/db-model/`
+         (the old name, dbkit, is retired). Carve targets are persisted in
+         inventory.json and resolved as REPO / target, so an inventory taken
+         before this version still points at `dbkit/...`: reconcile would report
+         every object as uncarved. Migrating an existing adoption means
+         rewriting those target strings in inventory.json (or re-running
+         `inventory` against the live database) — the fingerprints themselves
+         are unaffected, since they describe catalog shape, not file location.
   2.1.3  gate message loses its last read-only-login suggestion (owner: the
          notification alone is the policy; the alternative is not the tool's
          to sell).
@@ -218,7 +280,7 @@ CHANGELOG:
 """
 from __future__ import annotations
 
-__version__ = "2.1.3"
+__version__ = "2.4.0"
 
 import argparse
 import hashlib
@@ -230,9 +292,12 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 REPO = ROOT.parent
-SCRATCH = REPO / ".scratch" / "adoption"
-INVENTORY = SCRATCH / "inventory.json"
-EXCEPTIONS = SCRATCH / "exceptions.json"
+SCRATCH = REPO / ".scratch" / "adoption"      # local working state (gitignored)
+BASELINE = ROOT / "baseline"                  # versioned governed state
+EXCEPTIONS = BASELINE / "exceptions.json"
+WATCHED = BASELINE / "watched-data.json"
+LEGACY_INVENTORY = SCRATCH / "inventory.json"  # pre-2.3.0 location
+LEGACY_EXCEPTIONS = SCRATCH / "exceptions.json"  # pre-2.3.0 location
 PROBE = SCRATCH / "probe.json"
 TABLES_DIR = ROOT / "schema" / "tables"
 NATIVE_DIR = ROOT / "schema" / "native" / "tsql"
@@ -638,7 +703,18 @@ def filename_block_reason(name: str) -> str | None:
         return "name unsafe as a filename"
     if name.split(".")[0].upper() in WINDOWS_RESERVED:
         return "Windows-reserved filename"
+    if "." in name:
+        return "name contains '.', ambiguous with the <schema>.<name> file prefix"
     return None
+
+
+DEFAULT_SCHEMA = "dbo"
+
+
+def qualified_name(schema: str, name: str) -> str:
+    """The carve file stem: the bare name in the default schema,
+    <schema>.<name> elsewhere — the same rule the kit tools apply to DDL."""
+    return name if schema.lower() == DEFAULT_SCHEMA else f"{schema}.{name}"
 
 
 TYPE_TOKEN = re.compile(
@@ -793,6 +869,9 @@ READ_SAFE_PERMS = {
     "VIEW DEFINITION", "VIEW DATABASE STATE",
     "VIEW DATABASE PERFORMANCE STATE", "VIEW DATABASE SECURITY STATE",
     "VIEW DATABASE SECURITY AUDIT", "VIEW SECURITY DEFINITION",
+    # SQL Server 2022 split VIEW DEFINITION into granular children; a plain
+    # GRANT VIEW DEFINITION now surfaces these too — metadata reads only.
+    "VIEW PERFORMANCE DEFINITION", "VIEW CRYPTOGRAPHICALLY SECURED DEFINITION",
     "VIEW ANY COLUMN ENCRYPTION KEY DEFINITION",
     "VIEW ANY COLUMN MASTER KEY DEFINITION",
 }
@@ -889,6 +968,13 @@ def build_inventory(schema: str) -> dict:
     synonyms = read_synonyms(cur, schema)
     table_types = read_table_types(cur, schema)
     uncovered = read_uncovered(cur, schema)
+    watched = {}
+    for w in read_watch_list(schema):
+        try:
+            fp = data_fingerprint(cur, schema, w["table"])
+        except Exception as exc:  # missing table, unreadable type, permission
+            fp = {"unavailable": type(exc).__name__}
+        watched[w["table"]] = {"rule": w.get("rule"), **fp}
     conn.close()
 
     # object classes outside sys.objects' module/table types
@@ -909,7 +995,7 @@ def build_inventory(schema: str) -> dict:
                                    idxs.get(name, []), descriptions.get(name))
             depends = sorted({fk["ref_table"] for fk in fks.get(name, [])
                               if fk["ref_table"] != name})
-            target = f"dbkit/schema/tables/{name}.sql"
+            target = f"db-schema/schema/tables/{qualified_name(schema, name)}.sql"
             odd = [i for i in idxs.get(name, [])
                    if i["type"] not in KNOWN_INDEX_TYPES]
             if blocked is None and odd:
@@ -919,7 +1005,8 @@ def build_inventory(schema: str) -> dict:
         elif otype in ("SO", "SN", "TT"):
             fp = sha(json.dumps(obj["_payload"], sort_keys=True, default=str))
             depends = []
-            target = f"dbkit/schema/native/tsql/{MODULE_KIND_DIR[otype]}/{name}.sql"
+            target = (f"db-schema/schema/native/tsql/{MODULE_KIND_DIR[otype]}/"
+                      f"{qualified_name(schema, name)}.sql")
         else:
             definition = modules[name]["definition"]
             if definition is None:
@@ -935,7 +1022,7 @@ def build_inventory(schema: str) -> dict:
                 if parent and parent not in depends:
                     depends = [parent] + depends
             kind = MODULE_KIND_DIR[otype]
-            target = f"dbkit/schema/native/tsql/{kind}/{name}.sql"
+            target = f"db-schema/schema/native/tsql/{kind}/{qualified_name(schema, name)}.sql"
         entry = {"schema": schema, "name": name, "type": otype,
                  "fingerprint": fp, "depends_on": depends, "target": target}
         if blocked:
@@ -954,18 +1041,29 @@ def build_inventory(schema: str) -> dict:
             for e in group:
                 e.setdefault("blocked",
                              f"target collides case-insensitively ({names})")
+    # carve targets carry no schema, so the same name in two adopted schemas
+    # would share one file — block it for a human naming decision instead
+    for other, targets in other_schema_targets(schema).items():
+        for entry in inv_objects:
+            if entry["target"].lower() in targets:
+                entry.setdefault("blocked", f"target {entry['target']} is already "
+                                 f"carved for schema [{other}]")
+    inv_objects.sort(key=lambda e: (e["type"], e["name"]))
+    uncovered = sorted(uncovered, key=lambda u: (u.get("kind", ""), u.get("name", "")))
     # "_catalog" carries the full column/constraint/module payloads so carve can
     # render without reconnecting. inventory/reconcile pop it before persisting:
     # the persisted baseline needs only fingerprints, and definitions may hold
     # things that don't belong in a JSON dump kept around (routine source bulk).
-    # The baseline lives under .scratch/ — gitignored ON PURPOSE (object names
-    # and metadata stay out of git history); it is working state, not disposable:
-    # losing it means re-running `inventory`, which MOVES the drift reference.
+    # The baseline is versioned (db-schema/baseline/): it holds only names and
+    # fingerprints — the names are already in git through the carved DDL — and
+    # losing it, or keeping it on one machine, means re-running `inventory`,
+    # which MOVES the drift reference over whatever drift exists. No timestamp:
+    # git records when the baseline moved, and a stable file diffs cleanly.
     return {
-        "generated_at": datetime.now(timezone.utc).isoformat(),
         "schema": schema,
         "objects": inv_objects,
         "uncovered": uncovered,
+        "watched_data": dict(sorted(watched.items())),
         "_catalog": {"cols": cols, "keys": keys, "fks": fks, "checks": checks,
                      "idxs": idxs, "descriptions": descriptions,
                      "modules": modules, "sequences": sequences,
@@ -976,13 +1074,18 @@ def build_inventory(schema: str) -> dict:
 def cmd_inventory(args) -> int:
     inv = build_inventory(args.schema)
     inv.pop("_catalog")
-    SCRATCH.mkdir(parents=True, exist_ok=True)
-    INVENTORY.write_text(json.dumps(inv, indent=2), encoding="utf-8")
+    path = inventory_path(args.schema)
+    write_json(path, inv)
     counts: dict[str, int] = {}
     for obj in inv["objects"]:
         counts[obj["type"]] = counts.get(obj["type"], 0) + 1
     print(f"inventory: {len(inv['objects'])} objects in [{args.schema}] "
-          f"-> {INVENTORY.relative_to(REPO)}")
+          f"-> {path.relative_to(REPO)} (versioned drift baseline — it belongs in the next commit)")
+    if inv["watched_data"]:
+        print(f"  watched data: {len(inv['watched_data'])} table(s) hashed")
+    if LEGACY_INVENTORY.exists():
+        print(f"  note: {LEGACY_INVENTORY.relative_to(REPO)} is the pre-2.3.0 "
+              "baseline location — delete it once this file is versioned")
     for t, n in sorted(counts.items(), key=lambda kv: -kv[1]):
         print(f"  {t}: {n}")
     for obj in inv["objects"]:
@@ -1019,23 +1122,109 @@ def render_object(obj: dict, cat: dict) -> str:
     return definition
 
 
-def load_exceptions() -> dict[str, dict]:
-    """.scratch/adoption/exceptions.json — the HUMAN decisions carve/reconcile
-    consume: [{"name": ..., "status": "excluded"|"blocked", "reason": ...},
-    ...]; an optional "type" narrows an entry to one object class. This is the
-    mechanized half of the skill's exception rule: a reasoned entry exempts
-    the object from reconcile findings, and reconcile flags malformed entries
-    (missing reason, unknown status) instead of honoring them."""
-    if not EXCEPTIONS.exists():
-        return {}
-    return {e["name"]: e for e in
-            json.loads(EXCEPTIONS.read_text(encoding="utf-8"))}
+SAFE_SCHEMA = re.compile(r"[A-Za-z0-9_$#@-]+")
 
 
-def exception_for(exceptions: dict[str, dict], otype: str, name: str) -> dict | None:
-    e = exceptions.get(name)
-    if e and ("type" not in e or e["type"] == otype):
-        return e
+def note(msg: str) -> None:
+    print(f"note: {msg}", file=sys.stderr)
+
+
+def write_json(path: Path, data) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n",
+                    encoding="utf-8")
+
+
+def inventory_path(schema: str) -> Path:
+    if not SAFE_SCHEMA.fullmatch(schema):
+        sys.exit(f"schema name {schema!r} is not filename-safe for the baseline "
+                 "file — extend inventory_path() with an explicit mapping")
+    return BASELINE / f"inventory.{schema}.json"
+
+
+def baseline_schemas() -> list[str]:
+    found = sorted(p.name[len("inventory."):-len(".json")]
+                   for p in BASELINE.glob("inventory.*.json"))
+    if not found and LEGACY_INVENTORY.exists():
+        found = [json.loads(LEGACY_INVENTORY.read_text(encoding="utf-8"))["schema"]]
+    return found
+
+
+def load_baseline(schema: str) -> dict | None:
+    path = inventory_path(schema)
+    if path.exists():
+        return json.loads(path.read_text(encoding="utf-8"))
+    if LEGACY_INVENTORY.exists():
+        legacy = json.loads(LEGACY_INVENTORY.read_text(encoding="utf-8"))
+        if legacy.get("schema") == schema:
+            note(f"baseline read from the pre-2.3.0 location "
+                 f"{LEGACY_INVENTORY.relative_to(REPO)} — MOVE it to "
+                 f"{path.relative_to(REPO)} (versioned); moving keeps the drift "
+                 "reference, re-running inventory would absorb any drift")
+            return legacy
+    return None
+
+
+def other_schema_targets(schema: str) -> dict[str, set[str]]:
+    out: dict[str, set[str]] = {}
+    for other in baseline_schemas():
+        if other == schema:
+            continue
+        base = load_baseline(other) or {}
+        # a blocked object never claimed its file — counting it would make two
+        # schemas block each other on every re-run
+        out[other] = {o["target"].lower() for o in base.get("objects", [])
+                      if "blocked" not in o}
+    return out
+
+
+def read_watch_list(schema: str) -> list[dict]:
+    """db-schema/baseline/watched-data.json — tables whose DATA is part of a
+    protected rule (rates, reference prices): [{"schema": ..., "table": ...,
+    "rule": "ROY-01"}]; an entry without "schema" applies to every schema."""
+    if not WATCHED.exists():
+        return []
+    return [w for w in json.loads(WATCHED.read_text(encoding="utf-8"))
+            if w.get("schema", schema) == schema]
+
+
+def data_fingerprint(cur, schema: str, table: str) -> dict:
+    """Order-independent content hash of a watched table. The rows never leave
+    this process: each is serialized, the lines are sorted, hashed, and
+    dropped — only the row count and the sha256 are persisted or printed (the
+    census rule: aggregates, never values)."""
+    rows = fetch_rows(cur, f"SELECT * FROM {bq(schema)}.{bq(table)}")
+    lines = sorted(json.dumps([None if v is None else str(v) for v in row],
+                              ensure_ascii=False) for row in rows)
+    return {"rows": len(lines),
+            "sha256": hashlib.sha256("\n".join(lines).encode("utf-8")).hexdigest()}
+
+
+def load_exceptions() -> list[dict]:
+    """db-schema/baseline/exceptions.json — the HUMAN decisions carve/reconcile
+    consume, versioned with the repo: [{"name": ..., "status":
+    "excluded"|"blocked", "reason": ...}, ...]; optional "type" and "schema"
+    narrow an entry. This is the mechanized half of the skill's exception
+    rule: a reasoned entry exempts the object from reconcile findings, and
+    reconcile flags malformed entries (missing reason, unknown status)
+    instead of honoring them."""
+    path = EXCEPTIONS if EXCEPTIONS.exists() else (
+        LEGACY_EXCEPTIONS if LEGACY_EXCEPTIONS.exists() else None)
+    if path is None:
+        return []
+    if path == LEGACY_EXCEPTIONS:
+        note(f"exceptions read from the pre-2.3.0 location "
+             f"{LEGACY_EXCEPTIONS.relative_to(REPO)} — move it to "
+             f"{EXCEPTIONS.relative_to(REPO)} (versioned)")
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def exception_for(exceptions: list[dict], otype: str, name: str,
+                  schema: str) -> dict | None:
+    for e in exceptions:
+        if (e.get("name") == name and e.get("type", otype) == otype
+                and e.get("schema", schema) == schema):
+            return e
     return None
 
 
@@ -1049,7 +1238,7 @@ def cmd_carve(args) -> int:
     for obj in inv["objects"]:
         if only and obj["name"] not in only:
             continue
-        exc = exception_for(exceptions, obj["type"], obj["name"])
+        exc = exception_for(exceptions, obj["type"], obj["name"], args.schema)
         if "blocked" in obj or (exc and exc.get("status") in ("excluded", "blocked")):
             reason = obj.get("blocked") or exc.get("reason", "(no reason)")
             print(f"  skip {obj['type']} {obj['name']}: {reason}")
@@ -1065,7 +1254,24 @@ def cmd_carve(args) -> int:
 
 
 def cmd_reconcile(args) -> int:
-    # Three-way diff: committed baseline (inventory.json) × live catalog (read
+    schemas = [args.schema] if args.schema else baseline_schemas()
+    if not schemas:
+        sys.exit(f"no baseline in {BASELINE.relative_to(REPO)}/ — run "
+                 "`extract_tsql.py --schema <schema> inventory` first (adoption)")
+    exceptions = load_exceptions()
+    bad = [e for e in exceptions
+           if e.get("status") not in ("excluded", "blocked") or not e.get("reason")]
+    for e in bad:
+        print(f"  exceptions.json entry {e.get('name')!r}: needs "
+              'status "excluded"|"blocked" and a non-empty reason')
+    rc = 1 if bad else 0
+    for schema in schemas:
+        rc |= reconcile_schema(schema, exceptions)
+    return rc
+
+
+def reconcile_schema(schema: str, exceptions: list[dict]) -> int:
+    # Three-way diff: committed baseline (inventory.<schema>.json) × live catalog (read
     # now, in memory) × carved files on disk. Nothing is written — reconcile
     # only reports; fixing a finding is a human direction decision (see module
     # docstring). Exit 1 on any problem so `verify.py --live` fails loudly.
@@ -1095,25 +1301,22 @@ def cmd_reconcile(args) -> int:
     # + non-empty reason) are exempted and counted; malformed entries are
     # themselves problems. Identity is (type, name) — a table and a table
     # type may legally share a name.
-    if not INVENTORY.exists():
-        sys.exit(f"no {INVENTORY.relative_to(REPO)} — run `extract_tsql.py inventory` first")
-    recorded = {(o["type"], o["name"]): o for o in
-                json.loads(INVENTORY.read_text(encoding="utf-8"))["objects"]}
-    live = build_inventory(args.schema)
+    baseline = load_baseline(schema)
+    if baseline is None:
+        print(f"reconcile [{schema}]: no baseline {inventory_path(schema).relative_to(REPO)} "
+              "— restore it from the repo; re-running inventory would absorb drift")
+        return 1
+    recorded = {(o["type"], o["name"]): o for o in baseline["objects"]}
+    live = build_inventory(schema)
     cat = live.pop("_catalog")
     live_objs = {(o["type"], o["name"]): o for o in live["objects"]}
-    exceptions = load_exceptions()
 
     problems: list[str] = []
     warnings: list[str] = []
     exempt = 0
-    for e in exceptions.values():
-        if e.get("status") not in ("excluded", "blocked") or not e.get("reason"):
-            problems.append(f"exceptions.json entry {e.get('name')!r}: needs "
-                            'status "excluded"|"blocked" and a non-empty reason')
 
     for (otype, name), obj in live_objs.items():
-        exc = exception_for(exceptions, otype, name)
+        exc = exception_for(exceptions, otype, name, schema)
         if exc and exc.get("status") in ("excluded", "blocked") and exc.get("reason"):
             exempt += 1
             continue
@@ -1147,36 +1350,56 @@ def cmd_reconcile(args) -> int:
                             "then re-carve")
     for (otype, name) in recorded:
         if ((otype, name) not in live_objs
-                and not exception_for(exceptions, otype, name)):
+                and not exception_for(exceptions, otype, name, schema)):
             problems.append(f"DROPPED from source since inventory: {name}")
+
+    # watched data: a protected rule's parameters live in rows, which the
+    # catalog fingerprint cannot see
+    recorded_data = baseline.get("watched_data", {})
+    for table, now in live.get("watched_data", {}).items():
+        before = recorded_data.get(table)
+        label = table + (f" (rule {now['rule']})" if now.get("rule") else "")
+        if "unavailable" in now:
+            problems.append(f"DATA-WATCH unavailable: {label} — {now['unavailable']}")
+        elif not before or "sha256" not in before:
+            warnings.append(f"DATA-WATCH unbaselined: {label} — run `inventory` "
+                            "once no finding awaits a human")
+        elif before["sha256"] != now["sha256"]:
+            problems.append(f"DATA-DRIFT: {label} — content changed since the "
+                            f"baseline (rows {before['rows']} -> {now['rows']}); a "
+                            "protected rule's parameter changed outside the repo")
 
     # object classes the tool does not carve: honest coverage means each one
     # is either an exceptions entry (human decision) or a failing finding
     for u in live.get("uncovered", []):
-        if not exception_for(exceptions, u["kind"], u["name"]):
+        if not exception_for(exceptions, u["kind"], u["name"], schema):
             problems.append(f"BLOCKED {u['kind']} {u['name']}: object class not "
                             "carved by this tool — extend it or record an "
                             "exception")
 
-    # repo -> DB direction: a carved/designed file whose object exists nowhere
-    # in the live catalog nor in the baseline is a migration still in flight
-    live_names = {name for _, name in live_objs}
-    recorded_names = {name for _, name in recorded}
+    # repo -> DB direction: a carved/designed file of this schema (its prefix,
+    # or no prefix for the default schema) whose target exists nowhere in the
+    # live catalog nor in the baseline is a migration still in flight
+    known = ({o["target"].lower() for o in live["objects"]}
+             | {o["target"].lower() for o in baseline["objects"]})
     for path in sorted(list(TABLES_DIR.glob("*.sql")) + list(NATIVE_DIR.rglob("*.sql"))):
-        name = path.stem
-        if name not in live_names and name not in recorded_names:
+        stem = path.stem
+        file_schema = stem.split(".", 1)[0] if "." in stem else DEFAULT_SCHEMA
+        if file_schema.lower() != schema.lower():
+            continue
+        if path.relative_to(REPO).as_posix().lower() not in known:
             warnings.append(f"UNDEPLOYED: {path.relative_to(REPO)} — no live object "
                             "(pending migration?)")
 
     for w in warnings:
         print(f"  warn  {w}")
     if problems:
-        print(f"reconcile: {len(problems)} problem(s)"
+        print(f"reconcile [{schema}]: {len(problems)} problem(s)"
               + (f", {len(warnings)} warning(s)" if warnings else ""))
         for p in problems:
             print(f"  {p}")
         return 1
-    print(f"reconcile: OK — {len(live_objs)} objects, every fingerprint stable, "
+    print(f"reconcile [{schema}]: OK — {len(live_objs)} objects, every fingerprint stable, "
           "every carved file present and faithful"
           + (f"; {exempt} exception(s) honored" if exempt else "")
           + (f"; {len(warnings)} undeployed file(s) pending" if warnings else ""))
@@ -1188,16 +1411,37 @@ ENUMISH = re.compile(
     re.IGNORECASE)
 
 
+PERMISSION_DENIED = re.compile(r"\((229|262|297|300)\)|permission", re.IGNORECASE)
+
+
 def read_row_counts(cur, schema: str) -> dict[str, int]:
-    rows = fetch_rows(cur, """
-        SELECT t.name, SUM(ps.row_count)
-        FROM sys.dm_db_partition_stats AS ps
-        JOIN sys.tables AS t ON t.object_id = ps.object_id
+    """Row counts from sys.dm_db_partition_stats (cheap, metadata only). That
+    DMV needs VIEW DATABASE PERFORMANCE STATE; a plain read-only login (SELECT
+    + VIEW DEFINITION) lacks it, so a denial falls back to COUNT_BIG(*) per
+    table — exact and still an aggregate, but a full scan on large tables."""
+    try:
+        rows = fetch_rows(cur, """
+            SELECT t.name, SUM(ps.row_count)
+            FROM sys.dm_db_partition_stats AS ps
+            JOIN sys.tables AS t ON t.object_id = ps.object_id
+            JOIN sys.schemas AS s ON s.schema_id = t.schema_id
+            WHERE s.name = ? AND ps.index_id IN (0, 1)
+            GROUP BY t.name ORDER BY t.name
+        """, schema)
+        return {r[0]: int(r[1]) for r in rows}
+    except Exception as exc:
+        if not PERMISSION_DENIED.search(str(exc)):
+            raise
+    print("note: sys.dm_db_partition_stats denied (VIEW DATABASE PERFORMANCE "
+          "STATE missing) — counting rows with COUNT_BIG(*) per table instead",
+          file=sys.stderr)
+    tables = fetch_rows(cur, """
+        SELECT t.name FROM sys.tables AS t
         JOIN sys.schemas AS s ON s.schema_id = t.schema_id
-        WHERE s.name = ? AND ps.index_id IN (0, 1)
-        GROUP BY t.name ORDER BY t.name
+        WHERE s.name = ? ORDER BY t.name
     """, schema)
-    return {r[0]: int(r[1]) for r in rows}
+    return {t: int(fetch_rows(cur, f"SELECT COUNT_BIG(*) FROM {bq(schema)}.{bq(t)}")[0][0])
+            for (t,) in tables}
 
 
 def read_column_pairs(cur, schema: str) -> list[tuple[str, str]]:
@@ -1604,7 +1848,8 @@ def cmd_discover(args) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--schema", default="dbo")
+    parser.add_argument("--schema", help="default dbo; reconcile without it "
+                        "covers every baselined schema")
     sub = parser.add_subparsers(dest="command", required=True)
     probe = sub.add_parser("probe")
     probe.add_argument(
@@ -1623,6 +1868,8 @@ def main() -> int:
              "orphan-count alongside the name-implied ones")
     sub.add_parser("discover")
     args = parser.parse_args()
+    if args.schema is None and args.command != "reconcile":
+        args.schema = "dbo"
     return {"probe": cmd_probe, "inventory": cmd_inventory, "carve": cmd_carve,
             "reconcile": cmd_reconcile, "census": cmd_census,
             "discover": cmd_discover}[args.command](args)
