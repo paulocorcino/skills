@@ -41,6 +41,19 @@ Turning Query Store on (`ALTER DATABASE … SET QUERY_STORE = ON`) is a change t
 | `EXPLAIN` / `EXPLAIN ANALYZE` (8.0.18+) | estimated plan / actual — **`ANALYZE` executes** | `SELECT` | — |
 | slow query log | slow statements | access to the log | the log's retention |
 
+## SQLite
+
+The engine keeps **no workload history**: `top` comes from the application — its statement log, the ORM's query instrumentation, or a trace hook (`sqlite3_trace_v2`) — and a port's `top` reads that log.
+
+| Source | Shows | Needs | Window |
+|---|---|---|---|
+| `EXPLAIN QUERY PLAN` | the plan, no execution: `SCAN` (full table) vs `SEARCH … USING INDEX`, temporary B-trees for sorts | read access to the file | — |
+| `sqlite_stat1` (after `ANALYZE`) | the statistics the planner uses; absent or stale means blind plans | read | since the last `ANALYZE` / `PRAGMA optimize` |
+| `PRAGMA foreign_key_check`, `PRAGMA integrity_check` | rows violating foreign keys that were never enforced; corruption | read | now |
+| `PRAGMA journal_mode`, `synchronous`, `busy_timeout`, `foreign_keys` | the connection settings that decide throughput and integrity: WAL, `synchronous = NORMAL` with WAL, a busy timeout, foreign keys on | the application's connection code | per connection |
+
+Read-only means opening the file read-only (`file:…?mode=ro`, or `PRAGMA query_only = ON`) — there are no accounts to classify.
+
 ## Others
 
 Oracle records cost in `V$SQL` and, historically, in AWR / ASH — **AWR and ASH require the Diagnostics Pack license**; ask before reading them. Analytical engines (Snowflake, BigQuery, Databricks) expose a query history with bytes scanned and credits — cost is money there, measured per query.

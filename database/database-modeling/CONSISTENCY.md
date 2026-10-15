@@ -95,6 +95,8 @@ Walk every rule the Invariants & lifecycle theme produced, plus every Boundary e
 | **Row per unit** — one row per sellable unit, claimed by a skip-locked read, guarded by a unique constraint on the active claim | high contention, small quantity | row count grows with the quantity |
 | **Bounded pool** — unit rows only up to a cap sized to peak demand, refilled from the counter or ledger that remains the source of truth | high contention, large quantity | a replenishment routine, serialised so concurrent claims queue behind one refill instead of all refilling at once |
 
+**A single-writer engine** (SQLite) serializes every write already: the counter with a conditional decrement is the representation, and the contention moves to the write lock — short write transactions opened with `BEGIN IMMEDIATE`, a busy timeout, WAL mode so readers never wait on the writer.
+
 **Opens these questions:** the peak — how many writers in the same second, against what quantity; when the claim happens (on intent, at checkout, on payment) and how long it holds; how an expired claim returns to the pool; for a bounded pool, the cap and the refill trigger.
 
 **Rules the routines carry:**

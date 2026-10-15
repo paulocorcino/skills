@@ -21,7 +21,7 @@ A missing glossary is a starting state, not a blocker — a brownfield adoption 
 
 Walk them in dependency order — dialect before collation, identity before uniqueness, history before any table it reshapes.
 
-- **Dialect & portability** — canonical dialect and minimum version; secondary engines now or later; collation and folding (case, accents, whitespace); timezone and date-time storage; exact numerics — money, quantities, their unit and rounding rule
+- **Dialect & portability** — canonical dialect and minimum version; secondary engines now or later; collation and folding (case, accents, whitespace); timezone and date-time storage; exact numerics — money, quantities, their unit and rounding rule; an engine without an exact decimal type (SQLite) stores them as integers in the smallest unit
 - **Boundary** — what domain concept one row represents; which context owns each table — another context reaches it through a contract, never as a co-owner; whose data it is (single organization or multi-tenant — when multi-tenant, the tenant key inside every uniqueness rule and every cross-table reference, by composite key, plus the isolation mechanism when clients reach the database directly); every other system that reads or writes this database, and in which direction; what stays outside the model
 - **Identity** — key strategy; natural keys and the scope of each uniqueness rule — including satellite names (aliases, codes, synonyms) that share a namespace with the name they orbit
 - **Relations** — cardinality, ownership, and what deletion means at each edge; every edge a declared foreign key can enforce — a polymorphic reference (type + id) stays a gap until split into separate keys or tables

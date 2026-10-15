@@ -39,7 +39,7 @@ the source that generates diagrams and transpiles to other dialects.
 - ❌ `updated_at` with only `DEFAULT now()` (fires on insert alone) → ✅ maintained on every update by a named trigger or by the one writer that owns the table
 - ❌ `VARCHAR(255)` by habit → ✅ size derived from the domain
 - ❌ implicit soft-delete/enum/status → ✅ invariant as a named `CHECK`/`UNIQUE`/FK constraint or a domain table — the guarantee lives in the schema, never in a locking hint (doctrine P8)
-- ❌ money or a regulated quantity in binary floating point (`FLOAT`, `REAL`, `DOUBLE`) → ✅ exact decimal with a scale derived from the domain
+- ❌ money or a regulated quantity in binary floating point (`FLOAT`, `REAL`, `DOUBLE`) → ✅ exact decimal with a scale derived from the domain — integers in the smallest unit (cents) where the engine has no exact decimal (SQLite stores `DECIMAL` as floating point)
 - ❌ date-time with no stated zone → ✅ the project's date-time convention (zone-aware type, or UTC by rule) recorded in the model docs
 - ❌ reserved word as identifier in a new table → ✅ avoid keywords
 

@@ -32,7 +32,7 @@ def canonical_dialect() -> str:
 # named "<schema>.<name>" — in their file name and in the tools' output — so two
 # schemas never collide (db-schema/schema/README.md). Dialects absent here have
 # no default schema: any schema-qualified name keeps its prefix.
-DEFAULT_SCHEMAS = {"tsql": "dbo", "postgres": "public", "redshift": "public",
+DEFAULT_SCHEMAS = {"tsql": "dbo", "postgres": "public", "redshift": "public", "sqlite": "main",
                    "duckdb": "main", "snowflake": "public"}
 
 

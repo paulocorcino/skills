@@ -27,6 +27,12 @@ Inspired by Strong Migrations. The automatable ones become a tool check.
 
 Every migration must be **reversible** (have a clear path back).
 
+An engine with a limited `ALTER TABLE` (SQLite cannot add or drop a constraint in place)
+changes a table by **rebuilding** it, in one transaction: create the new table, copy the
+rows, drop the old one, rename the new one, recreate its indexes and triggers — with
+foreign-key enforcement suspended during the swap and `PRAGMA foreign_key_check` clean
+before commit.
+
 ## Protected rules and effective-dated data
 
 - A migration touching an object or a parameter of a rule tagged **[protected]** lands
