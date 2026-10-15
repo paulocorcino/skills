@@ -1,6 +1,6 @@
 # Consistency & propagation
 
-The disclosed branch of the **Consistency & propagation** theme in [`SKILL.md`](SKILL.md), reached when Boundary found another system reading or writing this database or a business process that changes state under more than one owner, or when Workload found contention. Rounds, routing, and the named-object rule work exactly as in `SKILL.md`; this file says what the theme asks and what each answer lands in the model.
+The disclosed branch of the **Consistency & propagation** theme in [`SKILL.md`](SKILL.md), reached when Boundary found another system reading or writing this database, a copy of it, or a business process that changes state under more than one owner, or when Workload found contention. Rounds, routing, and the named-object rule work exactly as in `SKILL.md`; this file says what the theme asks and what each answer lands in the model.
 
 Two leading words carry the theme:
 
@@ -19,6 +19,7 @@ Walk every rule the Invariants & lifecycle theme produced, plus every Boundary e
 | One business process changes state under several owners | Saga |
 | Two writers race for the same row | Optimistic version |
 | Many writers compete for one quantity in the same instant | Contested quantity |
+| The database has copies — read replicas, or copies that also accept writes | Replicas |
 
 ## Transactional outbox — the change leaves
 
@@ -101,11 +102,21 @@ Walk every rule the Invariants & lifecycle theme produced, plus every Boundary e
 
 **Rules the routines carry:**
 
-- **A read that feeds a decision reads committed data.** Dirty reads (`READ UNCOMMITTED`, `NOLOCK`) can return rows later rolled back, return a row twice, or miss rows entirely — tolerable for a display that may be slightly wrong, never for "is there stock? then claim it". Snapshot reads (MVCC, or the engine's read-committed-snapshot mode) give readers committed data without blocking writers.
+- **A read that feeds a decision reads committed data, on the primary.** A replica's data is committed but late — fine for display, never for the claim. Dirty reads (`READ UNCOMMITTED`, `NOLOCK`) can return rows later rolled back, return a row twice, or miss rows entirely — tolerable for a display that may be slightly wrong, never for "is there stock? then claim it". Snapshot reads (MVCC, or the engine's read-committed-snapshot mode) give readers committed data without blocking writers.
 - **A skip-locked claim locks what it reads.** The canonical dialect's skip-locked read — `FOR UPDATE SKIP LOCKED` where the engine has it, update-lock plus read-past plus row-lock hints where it does not — must take the row lock in the same statement; a read-past without a lock lets two sessions pick the same row, and escalation to page or table locks silently disables the skip. Look the mechanism up for the canonical dialect; record it in the routine's rule.
 - **Fixed lock order.** A routine touching several tables touches them in one stated order (the unit before the claim, say); a fixed order removes the circular wait behind deadlocks.
 
 **Trap:** the skip-locked read alone is not the guarantee. A session whose snapshot predates another's commit can still reach a just-claimed unit; the unique constraint on the active claim is what refuses it, and the routine retries the next unit or answers *sold out*.
+
+## Replicas — the database has copies
+
+**Answers** what each invariant becomes when rows live in more than one copy. Per copy, the decision is its role: read only, or also accepting writes.
+
+- **Read replica** — committed data, late by the replication lag. Readers that may be late read there; a read that feeds a decision reads the primary (contested quantity above). How late a replica may be is Derivation's staleness question, asked of the whole copy.
+- **Copies that also accept writes** — active-active replication, offline clients that sync later. A unique constraint or a sequence holds per copy, never across copies. Keys are born where the row is born, so Identity chooses keys that cannot collide (UUID or ULID, or a key range per copy). Each uniqueness rule that must hold across copies becomes cross-boundary: its carrier is the **conflict rule**, named per table — last writer wins by version, merge, or reject into a queue a person resolves — and the choice earns an ADR.
+- **Rules the apply skips** — replication writes rows past some enforcement: SQL Server objects marked `NOT FOR REPLICATION` (foreign keys, checks, triggers, identity), PostgreSQL logical-replication subscribers, which fire only triggers enabled as `REPLICA` or `ALWAYS` — and its foreign keys run as triggers. A copy that only receives rows inherits the primary's enforcement; a copy that also takes local writes needs every such rule enforced there too, and the rule says which copies enforce it.
+
+**Opens these questions:** every copy and its role; for each writable copy, the key strategy and each table's conflict rule; which rules the apply skips on each copy that takes local writes.
 
 ## Brownfield signals
 
@@ -113,4 +124,4 @@ The adoption's excavation and census already hold this theme's evidence. A trigg
 
 ## Closing the theme
 
-Closed when every invariant is marked local or cross-boundary; every cross-boundary one names its carrier object; every other system Boundary found has a direction and a pattern, or a written reason it needs none; every event type and every saga state is a glossary term; every contested quantity has its representation chosen against stated peak facts and its guarantee in a named constraint; and the outbox-vs-CDC, orchestration-vs-choreography, and contested-quantity representation choices each sit in an ADR.
+Closed when every invariant is marked local or cross-boundary; every cross-boundary one names its carrier object; every other system Boundary found has a direction and a pattern, or a written reason it needs none; every event type and every saga state is a glossary term; every contested quantity has its representation chosen against stated peak facts and its guarantee in a named constraint; every copy has its role, and every writable copy its key strategy and conflict rules; and the outbox-vs-CDC, orchestration-vs-choreography, contested-quantity representation, and conflict-rule choices each sit in an ADR.
