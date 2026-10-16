@@ -66,6 +66,8 @@ Then sweep each application for the signals the grill's later themes consume, ea
 - **rule parameters** — small tables read by routines or code and rarely written (rates, thresholds, price lists): **rule parameter candidate**
 - **home-made queues** — triggers copying rows into `*_queue` / `*_log`, `processed` / `sent` flags, jobs polling `status = 'pending'`: outbox or inbox candidates
 - **unguarded decisions** — a dirty read (`NOLOCK`, `READ UNCOMMITTED`) or a read-then-update in separate statements deciding a write: contested-quantity candidates
+- **authorization** — role, profile, or user checks gating a write (who may approve, cancel, exceed a value), and checks that only hide a button with no server-side guard: invariant or state-machine candidates
+- **write guards** — validations run before a write (required fields, ranges, formats, allowed transitions) that no constraint repeats: invariant candidates
 
 Code is an oracle of behavior, not of correctness: every finding is a candidate relation, invariant, or derivation, marked as a gap until the user confirms it. Feed candidate relations through `extract_<dialect>.py census --candidates …` so each reaches the grill sized — "violated by N rows": the census tests candidate edges of **any provenance** (code-excavated, agent-hypothesized where cryptic names defeat name-implication). Size the other candidates the same way wherever a count exists — rows with negative stock, rows stuck in a queue.
 

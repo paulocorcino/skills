@@ -37,7 +37,9 @@ A rule tagged **[protected]** has its cases in `docs/db-model/calc/<RULE-ID>.exa
 — the single copy; its test is parametrised over that file and holds no expected value
 of its own (format and change sequence in `docs/db-model/calc/README.md`).
 
-- A case with `validated_by` set is a hard assertion; a case without it is skipped as
+- A case with `validated_by` set is a hard assertion. A case only `characterized`
+  (brownfield: it reproduces the legacy) is a hard assertion too, reported as
+  *characterized, awaiting validation*. A case with neither is skipped as
   *awaiting validation*, so the gap shows in every run.
 - A failing protected case means the code is wrong. Its expected value changes only
   through the change sequence, with the approver's sign-off recorded in the case.

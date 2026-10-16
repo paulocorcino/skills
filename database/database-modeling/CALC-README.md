@@ -43,6 +43,9 @@ A memo gains a version whenever the law or the business changes the rule. A *cho
 ## Implementation
 <the single place the rule is computed — database routine or application module, by path — and the objects that form it; every other consumer reads the stored result; the ADR that chose the location>
 
+## Reconciliation
+<brownfield only — the legacy behavior this rule characterizes: per code variant (path:line), the stored rows it reproduces and their era; per divergent group, its count, era, and cause, or *unexplained* (an open gap); the parameters used per period; the date it ran. Then the validation owed: oracle, owner by role.>
+
 ## Worked examples
 Cases in [`<RULE-ID>.examples.yaml`](<RULE-ID>.examples.yaml) — what each one probes, in one line each.
 
@@ -66,20 +69,23 @@ cases:
       price_brl_per_m3: "2450.1234"
     output:
       amount_brl: "49186.23"
+    characterized: null     # brownfield: {source: <code path:line>, row: <origin key>, on: YYYY-MM-DD}
     oracle: accountant's spreadsheet, sheet 2026-06
     validated_by: null      # person or role
     validated_on: null      # YYYY-MM-DD
 ```
 
+`characterized` records that the case reproduces the legacy — the chosen code variant and the stored row — to the cent: behavior, never correctness. An agent may fill it with its evidence; only a person fills `validated_by`.
+
 Choose cases to break the formula, never to flatter it: a typical case; zero and boundary inputs; a period crossing an effective-date change; a rounding knife-edge (a value landing on the half); the largest expected magnitude against the declared scale; an adjustment or negative case where the domain allows one.
 
 A rule that must hold under concurrency states the concurrent load in its case (`concurrent_writers: 51`, `units: 50`), and its test runs that load as real simultaneous sessions against a real database of the canonical dialect — a sequential test passes whether or not the race is handled.
 
-The test for a rule is parametrised over this file. A case with `validated_by` set is a hard assertion; a case without it is reported as skipped, *awaiting validation*, so the gap stays visible in every run.
+The test for a rule is parametrised over this file. A case with `validated_by` set is a hard assertion. A case only `characterized` is a hard assertion too — it guards the legacy behavior against regression — reported as *characterized, awaiting validation*. A case with neither is reported as skipped, *awaiting validation*, so the gap stays visible in every run.
 
 ## Changing a protected rule
 
-The expected values belong to the human who validated them: a failing case means the code is wrong, and an expected value changes only with the approver's sign-off recorded in the case (`validated_by`, `validated_on`). A legal change is a new effective-dated version — of the parameters and of the memo. The previous version keeps its value; closing its open `valid_to` is the one edit it receives, so past periods keep computing with the version they were computed under.
+The expected values belong to the human who validated them — or, while only characterized, to the legacy behavior in force: a failing case means the code is wrong, and an expected value changes only with the approver's sign-off recorded in the case (`validated_by`, `validated_on`). Correcting a characterized value is a change of behavior with financial effect, never a fix that slips into a refactor. A legal change is a new effective-dated version — of the parameters and of the memo. The previous version keeps its value; closing its open `valid_to` is the one edit it receives, so past periods keep computing with the version they were computed under.
 
 Every change — to the code, the parameters, the memo, or the examples — runs this sequence, each step done only when its check holds:
 

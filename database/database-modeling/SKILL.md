@@ -5,11 +5,13 @@ description: Grill the user through the database model in dependency-ordered rou
 
 Interview the user relentlessly about the database model until shared understanding is reached for all *the themes* listed below. Map each theme as a *design tree*, where each decision branches out into the decisions that depend on it.
 
-Work the tree in **rounds**. The **frontier** is every decision whose prerequisites are already settled — the questions you can ask *now* without guessing at answers you haven't heard yet. A settled decision is not always a heard one: where the glossary, an ADR, the `docs/db-model/` docs, or the schema itself already answers, decide it yourself, record it, and announce it as established — it never enters a round. Ask the whole remaining frontier in one round: number each question and give your recommended answer **with its trade-off**. Then wait for the user's answers before the next round.
+Work the tree in **rounds**. The **frontier** is every decision whose prerequisites are already settled — the questions you can ask *now* without guessing at answers you haven't heard yet. A settled decision is not always a heard one: where the glossary, an ADR, the `docs/db-model/` docs, the schema, the code, or the data already answers, decide it yourself, record it, and announce it as established — it never enters a round. Ask the whole remaining frontier in one round: number each question and give your recommended answer **with its trade-off**. Then wait for the user's answers before the next round.
 
 Each round the user answers reshapes the tree — settled decisions push the frontier outward and unblock questions that depended on them. Recompute the frontier and ask the next round. A question whose answer depends on another question still open in this round belongs to a *later* round, not this one.
 
 Finding *facts* is your job, never the user's. When a frontier question needs a fact from the environment (filesystem, tools, etc.), dispatch a sub-agent to find it — on the smallest capable model, where the agent can choose one — don't ask the user for anything you could look up yourself. Don't block on it: a running exploration is an unsettled prerequisite, so only the questions downstream of it wait for the sub-agent to report — ask the rest of the frontier now. The *decisions* are the user's — put each to them and wait.
+
+Before each round, run the **evidence pass** over every candidate question: look for its answer in the code, the schema, and — when the database is reachable — the data. A fact the evidence settles leaves the round; a decision stays and carries its evidence into the trade-off. Every question that reaches the round carries one evidence line: *found* — the source and the number — or *searched* — where you looked, and nothing there. When the database is reachable, read [`EVIDENCE.md`](EVIDENCE.md) before the first pass.
 
 The session is done when the frontier is empty: every branch of the design tree visited, nothing left silently assumed. Do not act on it until the user confirms you have reached a shared understanding.
 
@@ -53,15 +55,18 @@ Route each resolved decision the moment it lands:
 
 ## Closing
 
+When the application's code is at hand, closing opens with a **code sweep** — sub-agents on the smallest capable model, one per cluster of files, the main agent classifying what they return. It has two moves. Every gap still open is searched across the whole codebase, not only where its round looked. And the code is swept for the rules no round asked about: authorization checks gating a write (who may approve, cancel, exceed a value), guards before a write (required fields, ranges, allowed transitions), rule constants, branches on a status. Each finding is cross-checked against the data where a count exists — a rule no row ever exercised may be dead code — and classified: a rule protecting data becomes a model rule with its named object; a domain concept becomes a glossary term; application-only behavior (a screen, a flow, a format) stays out, stated in one line of the negative scope. The findings return to the user as one last round, each with its evidence line.
+
 Before declaring the model ready, sweep the artifact — a grill appends in conversation order, and the file must not read that way. The sweep reorders and completes what was decided; a decision it uncovers goes back to the user as one more round.
 
 - rule IDs reordered and contiguous within each prefix
 - every glossary term present in the Vocabulary table, every closed-domain value among them, and every term the model represents named by some rule
 - every table assigned to exactly one owning context, and every invariant marked local or cross-boundary — each cross-boundary one carried by its named outbox, inbox, or saga object
+- every gap still open carrying an evidence line from the whole codebase, and every rule the code sweep found classified — model rule, glossary term, or stated out of scope
 - what the Boundary theme ruled *out* stated in "The business" — negative scope is what stops the next session reopening it
 - every status closed as [`STATE-MACHINE.md`](STATE-MACHINE.md) defines
 - every object named by a rule present in the Routines table
-- every **[protected]** rule closed as [`PROTECTED.md`](PROTECTED.md) defines — above all, every case in its examples file validated by a named person against a named oracle
+- every **[protected]** rule closed as [`PROTECTED.md`](PROTECTED.md) defines — above all, every case in its examples file validated by a named person against a named oracle, or — in a brownfield adoption — characterized against the legacy, with the validation owed named in its memo
 - decisions carrying trade-off prose moved out to ADRs, leaving the rule itself
 - `python db-schema/tools/verify.py` green
 
