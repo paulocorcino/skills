@@ -5,15 +5,17 @@ Inputs:
   --coverage <path|->        coverage block (literal `-` reads stdin)
   --fact-pack <path>         JSON emitted by fact_pack.py
   --not-exercised <path|->   optional `not exercised:` block from the report
-                             header. Used to enforce ADR-0003 F2 (one line per
-                             command, no class bundling).
+                             header. Enforces one line per command, each with
+                             its own blocker: bundling several checks under
+                             one reason hides which one was actually blocked.
   --report <path|->          optional full report body (or any subset
                              containing `## Findings` / `## Verification`).
                              Material files whose path is cited in this body
                              are inferred as implicit-reviewed and removed
-                             from `gap`. Coverage format F intentionally has
-                             no positive marker; this flag lets the audit
-                             observe the citations that already exist.
+                             from `gap`. The explicit-exception Coverage
+                             format has no positive marker by design; this
+                             flag lets the audit observe the citations that
+                             already exist.
 
 Output (stdout): one of
   audit: pass\nmaterial: N\nexcluded: N\nnot_reviewed: 0\ngap: none
@@ -27,17 +29,20 @@ appended:
   scope-auto-narrowed: yes (N/M files; reason: <aggregate>)
          — narrowed-by-user-request: true|false|unspecified
 
-When `narrowed-by-user-request` is `false` or `unspecified`, the
-provocation block from ADR-0002 §A3 follows the trailer.
+When `narrowed-by-user-request` is `false` or `unspecified`, a
+provocation block follows the trailer: a wide not-reviewed set the user did
+not ask for is the silent narrowing this audit exists to surface, so the
+reviewer must either confirm the narrowing was requested or widen coverage.
 
-ADR-0003 format defects (informational; do not change exit code):
-  - F1 glob in not-reviewed → `format-defect: glob-in-not-reviewed`
-  - F1 category-empty       → `format-defect: category-empty`
-  - F2 bundled not-exercised → `format-defect: bundled-not-exercised`
+Format defects (informational; do not change exit code):
+  - glob in not-reviewed     → `format-defect: glob-in-not-reviewed`
+    (a glob cannot be cross-checked against the material set)
+  - category matching nothing → `format-defect: category-empty`
+  - bundled not-exercised    → `format-defect: bundled-not-exercised`
 
 Exit codes: 0 on pass/partial; 2 on gap. Auto-narrow and format defects
-are informational, not blocking — the verdict ceiling lives in the Stop
-hook.
+are informational, not blocking — the reviewer applies the verdict
+ceiling per SKILL.md.
 """
 
 from __future__ import annotations
@@ -62,7 +67,7 @@ PROVOCATION = (
 
 GLOB_RE = re.compile(r"[*?\[\]]")
 CATEGORY_RE = re.compile(r"^category\s*:\s*(.+)$", re.IGNORECASE)
-# Heuristic for F2 bundling: an entry whose left side (before `—`/`-`/`:`
+# Heuristic for not-exercised bundling: an entry whose left side (before `—`/`-`/`:`
 # blocker separator) names two or more check keywords joined by comma or
 # `and`/`+`. Examples that match: "typecheck, lint, unit: infeasible",
 # "typecheck and lint — side effects".
@@ -171,7 +176,7 @@ def find_cited_files(text: str, material: set[str]) -> set[str]:
     similar — but does not match `Dockerfile.dev` when only `Dockerfile` is
     material, nor `app/src/main.ts` when only `src/main.ts` is material.
 
-    Used to infer implicit-reviewed files under Coverage format F (which has no
+    Used to infer implicit-reviewed files under the explicit-exception Coverage format (which has no
     positive marker): if the LLM cites a material file in `## Findings` or
     `## Verification`, count it as reviewed instead of leaking it into `gap`.
     """
@@ -327,8 +332,20 @@ def parse_skip_clauses(report_text: str) -> dict[str, str]:
     return skips
 
 
+def owning_package(path: str, roots: list[str]) -> str | None:
+    """Deepest non-root package root containing `path`, or None."""
+    best = None
+    for root in roots:
+        if root == ".":
+            continue
+        if path == root or path.startswith(root + "/"):
+            if best is None or len(root) > len(best):
+                best = root
+    return best
+
+
 def threshold_crossed(
-    material: set[str], not_exercised_text: str
+    material: set[str], not_exercised_text: str, package_roots: list[str] = ()
 ) -> tuple[bool, list[str]]:
     """Return (crossed, reasons). Mirrors SKILL.md threshold definition."""
     import re
@@ -341,6 +358,11 @@ def threshold_crossed(
     infra_hits = [f for f in material if infra_pat.search(f)]
     if infra_hits:
         reasons.append(f"infra/test paths touched ({len(infra_hits)} files)")
+    # The repo root is not a boundary: counting it would make any change that
+    # touches a root-level doc plus one package cross the threshold.
+    packages = {owning_package(f, list(package_roots)) for f in material} - {None}
+    if len(packages) > 1:
+        reasons.append(f"{len(packages)} packages touched ({', '.join(sorted(packages))})")
     return (bool(reasons), reasons)
 
 
@@ -348,9 +370,10 @@ def check_subagent_mandate(
     report_text: str | None,
     material: set[str],
     not_exercised_text: str,
+    package_roots: list[str] = (),
 ) -> list[str]:
     """Return list of format-defect lines if mandate is violated. Empty if OK."""
-    crossed, reasons = threshold_crossed(material, not_exercised_text)
+    crossed, reasons = threshold_crossed(material, not_exercised_text, package_roots)
     if not crossed:
         return []
     if report_text is None:
@@ -497,7 +520,8 @@ def main() -> int:
 
     report_text_for_mandate = report_text if args.report else None
     subagent_defects = check_subagent_mandate(
-        report_text_for_mandate, material, ne_text_raw
+        report_text_for_mandate, material, ne_text_raw,
+        fact_pack.get("package_roots", []),
     )
 
     out_lines = [

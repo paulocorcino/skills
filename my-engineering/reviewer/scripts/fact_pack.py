@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""fact_pack.py — emit a project-agnostic ground-truth file inventory for reviewer-v3.
+"""fact_pack.py — emit a project-agnostic ground-truth file inventory for reviewer.
 
 Output JSON to stdout. The reviewer's `## Coverage` section is reconciled
 against `material_files` and `excluded_files` by audit.py. This script does
@@ -82,6 +82,17 @@ CANDIDATE_MANIFESTS = [
     ".gitlab-ci.yml",
     "azure-pipelines.yml",
     "Jenkinsfile",
+]
+
+CANDIDATE_STANDARDS = [
+    "CODING_STANDARDS.md",
+    "CONTRIBUTING.md",
+    ".github/CONTRIBUTING.md",
+    "docs/CONTRIBUTING.md",
+    "STYLEGUIDE.md",
+    "docs/coding-standards.md",
+    "AGENTS.md",
+    "CLAUDE.md",
 ]
 
 GENERATED_MARKERS = ("// @generated", "# Code generated")
@@ -208,7 +219,7 @@ def find_package_roots(repo: Path) -> list[str]:
 def main() -> int:
     ap = argparse.ArgumentParser(description="Emit ground-truth review inventory as JSON.")
     ap.add_argument("--repo", default=".", help="Path to repo root (default: current dir)")
-    ap.add_argument("--target", default="working-tree", help="Target ref or 'working-tree'")
+    ap.add_argument("--target", default="HEAD", help="Target ref or 'working-tree'")
     ap.add_argument("--base", default=None, help="Base ref (default: origin/main → main)")
     args = ap.parse_args()
 
@@ -218,6 +229,9 @@ def main() -> int:
         return 1
 
     base = resolve_base(repo, args.base)
+    if not base or not run_git(repo, "rev-parse", "--verify", "--quiet", base):
+        print(json.dumps({"error": f"base does not resolve: {args.base or 'origin/main|main'}"}), file=sys.stderr)
+        return 1
     head = run_git(repo, "rev-parse", "HEAD")
     branch = run_git(repo, "rev-parse", "--abbrev-ref", "HEAD")
     changed = list_changed(repo, args.target, base)
@@ -242,6 +256,7 @@ def main() -> int:
         "excluded_files": excluded,
         "spec_directories": existing_dirs(repo, CANDIDATE_SPEC_DIRS),
         "manifests": existing_files(repo, CANDIDATE_MANIFESTS),
+        "standards_files": existing_files(repo, CANDIDATE_STANDARDS),
         "package_roots": find_package_roots(repo),
     }
     json.dump(payload, sys.stdout, indent=2)

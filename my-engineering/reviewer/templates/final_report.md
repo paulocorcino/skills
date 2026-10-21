@@ -33,9 +33,9 @@ narrowed-by-user-request: <true|false>   # required when scope: partial
 
 ## Notes
 
-Notes accepts only: scope limits, skipped checks, adjudication caveats, evidence caveats. Praise, "strong positives", strengths, and positive summaries are forbidden.
+Notes accepts only: scope limits, skipped checks, adjudication caveats, evidence caveats, pre-existing complexity hot spots.
 
-invoked: verifier (N), defect-hunter (N), test-auditor (N), scout (N)
+invoked: verifier (N), defect-hunter (N), test-auditor (N), standards-auditor (N), scout (N)
 
 audit_output: |
   <literal output of audit.py>
