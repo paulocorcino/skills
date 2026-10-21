@@ -16,6 +16,7 @@ Generated script pattern:
     V.assert_commit_present(r"^feat: add X")
     V.assert_only_files_touched(["src/x.ts"], base_sha="HEAD~1")
     V.run_gate("bun run build", slug="my-plan", stage=1, gate="build")
+    V.run_proof("bun test src/x.test.ts", expect=["rejects empty input"], check="C1.1")
     V.assert_report_exists("docs/plans/<slug>-stage-1-report.md")
     V.assert_no_placeholders("docs/plans/<slug>.md")
     sys.exit(V.summarize())
@@ -38,6 +39,16 @@ import sys
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+
+# Bumped whenever a primitive is added or its behaviour changes. scaffold.py
+# compares it with the repo's vendored copy and refreshes an older one.
+# Primitives are only ever added, so a refresh never breaks an older plan.
+VERSION = 2
+
+# The Windows console code page (cp1252) cannot print every character a
+# gate emits; an unencodable one would crash summarize() mid-report.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 
 # Resolve repo root once. Stage scripts live at <repo>/docs/plans/, so the
@@ -167,9 +178,11 @@ class _Verifier:
                 cwd=cwd,
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=timeout,
             )
-            stdout, stderr, returncode = proc.stdout, proc.stderr, proc.returncode
+            stdout, stderr, returncode = proc.stdout or "", proc.stderr or "", proc.returncode
         except subprocess.TimeoutExpired as exc:
             timed_out = True
             stdout = exc.stdout.decode("utf-8", errors="replace") if isinstance(exc.stdout, bytes) else (exc.stdout or "")
@@ -200,6 +213,37 @@ class _Verifier:
             detail = "\n        ".join(tail)
         return self._record(f"gate: {cmd}", ok, detail, log_path)
 
+    def run_proof(
+        self,
+        cmd: str,
+        *,
+        expect: list[str],
+        check: str | None = None,
+        cwd: str | None = None,
+        timeout: int = 600,
+    ) -> bool:
+        """Run a check's proof and confirm every named test actually ran.
+
+        Pass = exit 0 AND each string in `expect` (a test name or id) appears
+        in the runner output. A filter that matches nothing exits 0 on several
+        runners (`passWithNoTests` and equivalents) — a green check with no
+        test behind it; requiring the name in the output closes that hole.
+        Use a runner flag that prints per-test names (`pytest -v`,
+        `cargo test -- --nocapture`, `jest --verbose`, `go test -v`).
+        """
+        label = check or (expect[0] if expect else "proof")
+        if not self.run_gate(cmd, cwd=cwd, timeout=timeout, gate=f"proof-{label}"):
+            return False
+        log_path = self.checks[-1].log_path
+        output = log_path.read_text(encoding="utf-8", errors="replace") if log_path else ""
+        # Search only what the runner printed: the log header echoes `cmd`,
+        # and a `-k <name>` filter would otherwise match itself.
+        output = output.partition("--- STDOUT ---\n")[2]
+        missing = [name for name in expect if name not in output]
+        ok = not missing
+        detail = "" if ok else f"exit 0 but not seen in output: {', '.join(missing)}"
+        return self._record(f"proof ran: {label}", ok, detail, log_path)
+
     # ------------------------------------------------------------------ git
 
     def assert_clean_tree(self, *, cwd: str | None = None) -> bool:
@@ -209,6 +253,8 @@ class _Verifier:
             cwd=cwd,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
         )
         clean = proc.returncode == 0 and proc.stdout.strip() == ""
         detail = proc.stdout.strip() if not clean else ""
@@ -223,6 +269,8 @@ class _Verifier:
             cwd=cwd,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
         )
         if proc.returncode != 0:
             return self._record(
@@ -259,6 +307,8 @@ class _Verifier:
             cwd=cwd,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
         )
         if proc.returncode != 0:
             return self._record(
@@ -351,9 +401,10 @@ class _Verifier:
     # (in case someone hand-builds a plan from the skill template instead of
     # invoking scaffold.py). Avoids generic <[a-z]+> to prevent false positives
     # on legitimate angle-bracket content (HTML, generics, SQL types).
+    # `<FILL` matches on the opening token alone, so a marker whose closing
+    # `>` sits on a later line is still caught.
     _PLACEHOLDER_RX = re.compile(
-        r"<FILL[^>]*>"
-        r"|<FILL-OR-DELETE[^>]*>"
+        r"<FILL"
         r"|<repo>"
         r"|<plan-slug>"
         r"|<plan title>"

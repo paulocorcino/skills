@@ -22,9 +22,13 @@ landing commit advice stay consistent regardless of the chosen location.
 
 The planner runs this BEFORE filling in stage-specific content. Output contains
 all repeated boilerplate (Execution model, Execution policy, Executor adapter,
-Reviewer gate, Stage 0, hand-off template, End-to-end verification) so the
-planner only edits the cognitive parts: per-stage scope, files, order of
-operations, and hand-off prompts.
+Hand-off conventions, Reviewer gate, Stage 0, hand-off template, End-to-end
+verification) so the planner only edits the cognitive parts: Context, Swept,
+One-way doors, and per stage the size, scope, files, order of operations,
+checks with their proofs, and hand-off prompt.
+
+This file is the single source of truth for the plan skeleton. The skill's
+references describe how to fill it, never a copy of it.
 
 Safety:
 - --output is required (no stdout redirect, which can truncate an existing
@@ -39,6 +43,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import sys
 import tempfile
 from datetime import date
@@ -50,9 +55,9 @@ Staged subagent execution (prompt chaining + gate checks). Do NOT run as one lin
 
 0. **Pre-execution placeholder gate** (mandatory, before launching any stage). Run:
    ```
-   python3 -c "import sys; sys.path.insert(0,'docs/plans'); from _verify import V; V.assert_no_placeholders('docs/plans/{slug}.md'); sys.exit(V.summarize())"
+   python3 -B -c "import sys; sys.path.insert(0,'docs/plans'); from _verify import V; V.assert_no_placeholders('docs/plans/{slug}.md'); sys.exit(V.summarize())"
    ```
-   If non-zero, abort and surface the offending lines. Fix or delete the flagged blocks; do NOT bypass.
+   (Use `python` where `python3` is absent, common on Windows.) If non-zero, abort and surface the offending lines. Fix or delete the flagged blocks; do NOT bypass.
 1. **Parent** reads this plan end-to-end (orchestration needs the full picture).
    **Subagents** read only the sections their hand-off prompt names — never
    other stages' blocks. This split is a deliberate token optimization.
@@ -61,8 +66,13 @@ Staged subagent execution (prompt chaining + gate checks). Do NOT run as one lin
    - prompt: the verbatim Hand-off prompt block for that stage
    - description: the stage title
    - foreground, sequential, `model` selected per Tier/Effort (see `## Executor adapter` mapping table)
-4. On return, verify: build + gates clean, commit SHA present in `git log`,
-   post-stage report written, scope respected (only declared files touched).
+4. On return, verify **independently** — the subagent's reported results are a
+   claim, not evidence. Re-run the stage's proofs yourself at `HEAD` (its
+   verify script, or every `Proof:` of its `**Checks:**` list) and confirm each
+   named test appears in the output as run — a filter matching nothing exits 0
+   on several runners. Then: build + gates clean, commit SHA present in
+   `git log`, post-stage report written, scope respected (only declared files
+   touched).
 5. Green -> Mode handling:
    - autonomous: launch Stage N+1 immediately.
    - semi-autonomous: post the post-stage summary + `Resume? [y / edit / abort]`
@@ -70,8 +80,10 @@ Staged subagent execution (prompt chaining + gate checks). Do NOT run as one lin
      hand-off then `y`; `abort` -> stop (committed work is preserved).
    Red -> apply the `## Execution policy` retry rule.
 6. After the final stage, run `## End-to-end verification`, run the
-   `## Reviewer gate` if not `none`, and emit the
-   stage -> SHA -> report-path summary table.
+   `## Reviewer gate` if not `none`, and fill `## End-to-end summary`. Then
+   list any externally-blocked items still open (with reopen criteria) and,
+   if the working-tree policy was `stash-authorized`, remind the user to
+   `git stash pop` (name the stash ref).
 
 Parent responsibilities (not delegable): launching stages in order, verifying
 green between stages, running end-to-end verification, running the reviewer
@@ -121,12 +133,18 @@ feature work — isolating it here keeps Stage 0 and Stage 1+ scope-clean.
 The Plan landing commit assumes `docs/plans/` is **trackable**. Two cases:
 
 - If `.gitignore` ignores `docs/plans/` wholesale (e.g. a `docs/plans/` line),
-  **narrow the rule to ignore only logs**: replace that line with
-  `docs/plans/logs/`. The plan file, `_verify.py`, and verify scripts MUST be
-  versioned; only gate logs are excluded. Do NOT use `git add -f` to bypass —
-  the rule itself needs fixing.
-- If `.gitignore` does not ignore `docs/plans/`, just append `docs/plans/logs/`
-  if not already present.
+  **narrow the rule to ignore only generated artifacts**: replace that line
+  with `docs/plans/logs/` and `docs/plans/__pycache__/`. The plan file,
+  `_verify.py`, and verify scripts MUST be versioned; only gate logs and the
+  bytecode cache Python writes when a script imports `_verify` are excluded.
+  Do NOT use `git add -f` to bypass — the rule itself needs fixing.
+- If `.gitignore` does not ignore `docs/plans/`, append `docs/plans/logs/`
+  and `docs/plans/__pycache__/` where not already covered — the cache would
+  otherwise dirty the tree on the first verify run and fail `clean-required`.
+- If `.gitignore` ignores report files (e.g. `docs/plans/*-report.md`) while
+  this plan's `Report policy` is `committed`, STOP: re-scaffold with
+  `--report-policy gitignored`, or remove the pattern if reports should be
+  versioned. A mismatch fails `clean-required` after the first stage.
 """
 
 _REPORT_POLICY_NOTE_GITIGNORED = """
@@ -142,9 +160,9 @@ table emitted by the parent.
 _PLAN_LANDING_COMMIT_BODY = """
 The landing commit MUST contain:
 1. `<repo>/docs/plans/{slug}.md` — this plan file.
-2. `<repo>/docs/plans/_verify.py` — vendored verify primitives; the planner
-   copies this from the staged-plan skill source as part of Phase 1.5 if not
-   already present in the repo. Stage scripts import it via
+2. `<repo>/docs/plans/_verify.py` — vendored verify primitives, written by
+   `scaffold.py` (a missing or older copy is replaced; stage it even when the
+   only change is the refresh). Stage scripts import it via
    `sys.path.insert(0, 'docs/plans'); from _verify import V`.
 3. `<repo>/docs/plans/_report-template.md` — scaffolded alongside the plan;
    subagents copy it as the starting structure for post-stage reports.
@@ -291,21 +309,33 @@ the human-readable summary is returned to the parent.
 REVIEWER_GATE = """## Reviewer gate (only if Reviewer != none)
 **Tier:** critical
 **Effort:** extended
-After the final stage commits green:
-- reviewer: light -> small subagent validates scope, diff vs. plan, gate
-  results, post-stage reports, and obvious risk. Does NOT replan.
-- reviewer: deep -> same plus security/perf/maintainability lens for
-  stack-relevant best practices.
+After the final stage commits green, the **parent** dispatches a fresh
+reviewer subagent — never a stage subagent, never a child of one — over the
+whole plan: diff range `<plan landing commit>..HEAD` and **every** check of
+every stage block, whoever wrote them.
+- reviewer: light -> accounts for every check: the proof ran green at `HEAD`
+  and the assertion that settles it is located (`file:line` + the assertion
+  expression, targeting the value the check names). A check without a located
+  assertion counts as not proven. Plus scope, diff vs. plan, post-stage
+  reports, `## Swept` / `## One-way doors` honoured, and obvious risk.
+- reviewer: deep -> same plus a security/perf/maintainability lens for
+  stack-relevant best practices, plus **fault injection**: in a scratch
+  worktree (`git worktree add <scratch> HEAD`; never `git stash`), inject one
+  behaviour-level fault per distinct assertion surface (flip a condition,
+  change a returned value, shift a bound by one; cap 5), run the narrowest
+  covering proof, confirm it FAILS, discard the scratch. A surviving mutant is
+  a finding.
 
 Reviewer returns a verdict in
 `pass | pass-with-notes | fail | blocked`
-plus a findings list (each: `file:line`, severity, description).
+plus a check table (check id, proof run, `file:line` evidence, result) and a
+findings list (each: `file:line`, severity, description).
 Reviewer never edits code and never replans.
 If a `reviewer` skill is available in the executor, prefer it; otherwise use
 an inline QA prompt that takes the plan + diff range as input.
 
 ### Arbiter (run only if findings list is non-empty)
-**Tier:** critical / **Effort:** focused
+**Tier:** critical / **Effort:** standard
 Reads the reviewer verdict + findings + diff range. For each finding,
 applies this decision tree verbatim:
 
@@ -321,7 +351,7 @@ Arbiter records both answers per finding in the output md (auditable).
 Arbiter does NOT edit code and does NOT replan.
 
 ### Fix round (run only if any `must-fix` exists; HARD MAX = 1 round)
-**Tier:** standard / **Effort:** focused
+**Tier:** standard / **Effort:** standard
 Fix-subagent receives only the `must-fix` items + their target files.
 - Applies fixes within those files only.
 - For each item: writes a `fix note` -- what changed, line(s), and one
@@ -377,6 +407,32 @@ Verdict mapping:
   file path to the user.
 """
 
+SWEPT = """## Swept (requirements the source did not state)
+Each theme resolves to the check ids that cover it, to `existing: <where the
+code already enforces it>`, or to `not in scope — <why>`. Every theme gets an
+answer; none is passed over in silence.
+- validation: <FILL>
+- failure modes: <FILL>
+- idempotency / retry: <FILL>
+- authorization: <FILL>
+- concurrency / ordering: <FILL>
+- data lifecycle: <FILL>
+- external-dependency failure: <FILL>
+- state transitions: <FILL>
+- observability: <FILL>
+"""
+
+ONE_WAY_DOORS = """## One-way doors
+Choices whose reversal costs more than a refactor: a persisted schema, a
+contract someone else consumes, a new dependency, a data backfill, a pattern
+the codebase does not have yet. Each row: the literal shape the next person
+will copy, and the alternative rejected — named with the property that
+disqualified it ("cannot express the next state", never "cleaner"). Stages
+build to these rows; a stage that finds a new door records it in its report.
+
+<FILL: table `| Door | Literal shape | Alternative rejected |`, or the single line `None — (why nothing in this track is hard to reverse)`>
+"""
+
 HANDOFF_CONVENTIONS = """## Hand-off conventions (apply to every stage)
 
 **Authorization:**
@@ -386,22 +442,52 @@ HANDOFF_CONVENTIONS = """## Hand-off conventions (apply to every stage)
 - MAY NOT touch pre-existing unrelated working-tree edits.
 - MAY NOT skip gates or use --no-verify / bypass hooks.
 - MAY NOT spawn nested subagents (no Agent calls inside this stage).
+- MAY NOT weaken an assertion, delete a test, or skip one to turn a gate
+  green. The stage's `**Checks:**` are the bar you build under, fixed for the
+  whole stage: if a check or an existing test is genuinely wrong, STOP and
+  report.
+
+**Checks and proofs:**
+- Tests assert what the check says, never what the code happens to do —
+  write each new proof from the check, not by reading the implementation.
+- A proof that is a new test: write it first and watch it fail for the right
+  reason (red), then implement until it passes.
+- Every `Proof:` must be seen to run: the named test appears in the runner
+  output as executed and passed, not just a green suite.
+- Re-run a command only after the code changed since its last green run; a
+  repeat on unchanged code adds no information.
 
 **Scope discipline:**
 - If the stage appears to require files outside the declared list, STOP and
   report. Do NOT silently expand scope.
 - If pre-existing test/build failure is unrelated to this stage, STOP and
   report. Do NOT fix it.
+- Improvements noticed outside the stage: list them under `Noticed, not
+  touched` in the report and leave the code as it is.
+
+**One-way doors found mid-stage:** a hard-to-reverse choice the plan's
+`## One-way doors` does not cover (persisted schema, a contract someone else
+consumes, a new dependency, a pattern the codebase does not have yet) is
+yours to decide: record it under `Decisions` in the report — literal shape +
+the alternative rejected and the property that disqualified it — **before**
+writing the code that closes it. A choice that contradicts a door the plan
+already fixed is a STOP.
 
 **Failure protocol:**
 - Gate fails within declared scope -> fix within scope and re-run the gate.
 - Any STOP condition above -> return to parent with a clear reason.
+- Context compacted mid-stage -> re-read your stage block and `git diff`
+  before continuing.
 
 **Return to parent:**
 - Per-file summary with actual grep-found locations.
+- Check results: check id -> proof run -> pass/fail.
 - Gate results (pass/fail + snippets).
 - Commit SHA + subject.
 - Deviations from the plan, if any.
+- Tried and abandoned: approaches discarded and why (mandatory on a red
+  return — the parent passes it into the retry so the next attempt starts
+  past the dead ends).
 - Path to the post-stage report written to disk.
 """
 
@@ -415,14 +501,29 @@ REPORT_TEMPLATE_CONTENT = """\
 ## Files changed
 <!-- list each file with a brief description of the change -->
 
+## Checks
+<!-- one row per check in the stage block; every check gets a row -->
+| Check | Proof run | Result |
+|---|---|---|
+| C<N>.1 | `<command>` — test seen in output | pass |
+
 ## Gate results
 <!-- build: pass/fail, tests: pass/fail, lint: pass/fail, etc. -->
 
-## Acceptance criteria audit
-<!-- tick off each acceptance criterion from the plan -->
+## Decisions
+<!-- one-way doors decided during the stage, written BEFORE the code that
+closes them: door | literal shape | alternative rejected (+ the property that
+disqualified it). "None" if the stage closed no new door. -->
 
 ## Deviations from plan
 <!-- any differences from the planned order of operations or file list -->
+
+## Tried and abandoned
+<!-- approaches tried and discarded, with the reason. Neither the code nor the
+plan preserves these. "None" if nothing was abandoned. -->
+
+## Noticed, not touched
+<!-- improvements spotted outside the stage's scope; candidates for the backlog -->
 
 ## Surprises / notes
 <!-- discoveries made during execution that may affect later stages -->
@@ -431,10 +532,11 @@ REPORT_TEMPLATE_CONTENT = """\
 _HANDOFF_HEADER = """**Hand-off prompt for Stage {n}:**
 > You are executing Stage {n} of <FILL: plan title> at <FILL: absolute plan path>.
 > From that plan file, read ONLY: (a) `## Execution model`, (b) `## Execution policy`,
-> (c) `## Hand-off conventions`, (d) `## Global conventions`, (e) `## Critical files`,
-> and (f) your own stage block between `<!-- BEGIN STAGE {n} -->` and `<!-- END STAGE {n} -->`.
+> (c) `## Hand-off conventions`, (d) `## Global conventions`, (e) `## One-way doors`,
+> (f) `## Critical files`, and (g) your own stage block between `<!-- BEGIN STAGE {n} -->` and `<!-- END STAGE {n} -->`.
 > Do NOT read other stages' blocks — they are not your context. Then read
-> <repo>/CLAUDE.md for repo-wide rules. Your authoritative spec is the stage block.
+> the repo's agent instruction files (`<repo>/AGENTS.md`, `<repo>/CLAUDE.md`, or
+> your executor's equivalent — whichever exist) for repo-wide rules. Your authoritative spec is the stage block.
 >
 > Repo root: <FILL: absolute path>
 > Branch: <FILL: branch>
@@ -467,8 +569,7 @@ def _handoff_header(n: int) -> str:
 _HANDOFF_BODY_PRELUDE = """
 > Your scope: Stage {n} only - <FILL: title>. Items: <FILL: IDs>.
 >
-> Spec is your stage block (Files, Order of operations, Verification, Report
-> path). Gates/invariants/commit style: `## Global conventions`. Working-tree
+> Spec is your stage block (Files, Order of operations, Checks, Report path). Gates/invariants/commit style: `## Global conventions`. Working-tree
 > policy: `## Execution policy`. Authorization/scope/failure/return-to-parent:
 > `## Hand-off conventions`.
 >
@@ -508,7 +609,7 @@ def render_handoff_body(n: int, slug: str, report_policy: str) -> str:
 def render_stage(n: int, title: str, slug: str, report_policy: str) -> str:
     if report_policy == "gitignored":
         order_last = (
-            "N. Gates pass -> write the post-stage report locally (gitignored)\n"
+            "N. Every proof + gate passes -> write the post-stage report locally (gitignored)\n"
             "   -> stage ONLY the code files -> commit. The report stays in the\n"
             "   working tree but is not committed."
         )
@@ -520,7 +621,7 @@ def render_stage(n: int, title: str, slug: str, report_policy: str) -> str:
         )
     else:
         order_last = (
-            "N. Gates pass -> write the post-stage report -> stage code files AND the\n"
+            "N. Every proof + gate passes -> write the post-stage report -> stage code files AND the\n"
             "   report file together -> commit. (One commit per stage; report is committed\n"
             "   alongside the code.)"
         )
@@ -530,6 +631,10 @@ def render_stage(n: int, title: str, slug: str, report_policy: str) -> str:
             f"`Commit:` slot as `_filled by parent_` — the End-to-end summary table is the "
             f"canonical source for that mapping."
         )
+    # Sequential execution is the default contract; the planner edits this
+    # line when the real dependency set differs. The parent reads it only to
+    # tell the user which remaining stages a red stage does NOT block.
+    depends_on = "none" if n <= 1 else f"Stage {n - 1}"
 
     return f"""<!-- BEGIN STAGE {n} -->
 ## Stage {n} - {title}
@@ -538,6 +643,9 @@ def render_stage(n: int, title: str, slug: str, report_policy: str) -> str:
 **Effort:** standard       <!-- minimal | standard | extended -->
 <!-- STAGE {n}: tier-rationale -->
 **Tier rationale:** <FILL: 1-2 lines justifying this Tier/Effort. If the stage is mechanical apply-pattern work, say so; if judgment, name the specific decision the executor must make. The executor uses this to choose the cheapest viable model.>
+<!-- STAGE {n}: size -->
+**Size:** <FILL: ~Nk tokens — sum of `wc -c` / 4 over the files this stage reads; a floor, not a forecast>
+**Depends on:** {depends_on}
 <!-- STAGE {n}: items -->
 **Items:** <FILL: atomic IDs>
 <!-- STAGE {n}: scope -->
@@ -554,14 +662,12 @@ touching files outside it, STOP and report instead of silently expanding.
 1. <FILL>
 {order_last}
 
-<!-- STAGE {n}: verification -->
-**Verification:** <FILL: per-stage commands + expected outcomes>
-<Generate `docs/plans/{slug}-verify-stage-{n}.py` when ANY of:
-  - ≥4 distinct shell commands in this Verification block
-  - ≥2 grep-based invariant assertions ("must return 0 matches", "must still find X")
-  - ≥2 _verify primitives used (assert_clean_tree, assert_only_files_touched, etc.)
-When in doubt, generate the script — it costs ~20 lines and survives retries.
-Otherwise keep gates inline.>
+<!-- STAGE {n}: checks -->
+**Checks:** one observable claim each, with a concrete value; the proof names a
+specific test or command whose exit code settles that claim — never a whole suite.
+- C{n}.1 — <FILL: claim> · Proof: `<FILL: specific test id or command>`
+Gates from `## Global conventions` also run.
+<FILL-OR-DELETE: replace with `Verify script: docs/plans/{slug}-verify-stage-{n}.py` when ANY of ≥4 distinct proof/gate commands, ≥2 grep invariants, ≥2 `_verify` primitives (when in doubt, generate it); delete this line when the proofs stay inline — see `references/verify-scripts.md`>
 
 <!-- STAGE {n}: manual -->
 **Manual verification (if any):** <FILL or "none">
@@ -584,16 +690,16 @@ def render_execution_policy(mode: str, working_tree: str, reviewer: str, reviewe
     if mode == "semi-autonomous":
         mode_extra = (
             "\n  Between-stage checkpoint posted by parent — format:\n"
-            "    `✓ Stage N done — {sha} \"{subject}\" | Files: ... | Gates: build ✓ test ✓ ... | Report: <path> | Next: Stage N+1 — {title} | Resume? [y / edit / abort]`\n"
+            "    `✓ Stage N done — {sha} \"{subject}\" | Files: ... | Gates: build ✓ test ✓ ... | Report: {report path} | Next: Stage N+1 — {title} | Resume? [y / edit / abort]`\n"
             "    `y` -> launch next; `edit` -> user adjusts next hand-off; `abort` -> stop (committed work preserved)."
         )
     return f"""## Execution policy (fixed defaults unless user overrode)
 - Mode: {mode}{mode_extra}
 - Commit authorization: per-stage-direct
-- On red: auto-retry-up-to-2 — cap of 2 retries; each retry passes the prior failure excerpt and narrows the instruction to the same file list. NEVER retry on scope violations, pre-commit hook rejections, or hook bypass attempts (escalate immediately). On exhaustion: stop and surface.
+- On red: auto-retry-up-to-2 — cap of 2 retries; each retry passes the prior failure excerpt plus the subagent's `Tried and abandoned` list, and narrows the instruction to the same file list. NEVER retry on scope violations, pre-commit hook rejections, test-weakening, or hook bypass attempts (escalate immediately). Never promote the stage's Tier on retry: a `mechanical` stage failing twice means the classification was wrong — stop and replan. On exhaustion: stop and surface, naming the remaining stages whose `Depends on:` excludes the red stage (the user may choose to run them).
 - Working-tree policy: {working_tree} — per-state behavior is described inline in `## Stage 0`.
 {reviewer_line}
-- Human-interaction stops: whenever execution halts awaiting a human decision (reviewer verdict `fail`/`blocked` after fix round; retry exhausted; scope violation / hook-bypass escalation; dirty-tree mid-run), the executor MUST call `PushNotification` BEFORE yielding control. Message format: `"Plan <slug>: <reason> — see <report-or-file path>"`. Do NOT notify on normal between-stage transitions or successful completion.
+- Human-interaction stops: whenever execution halts awaiting a human decision (reviewer verdict `fail`/`blocked` after fix round; retry exhausted; scope violation / hook-bypass escalation; dirty-tree mid-run), the executor MUST send a push notification BEFORE yielding control (Claude Code: `PushNotification`; otherwise the executor's equivalent). Message format: `"Plan <slug>: <reason> — see <report-or-file path>"`, under ~120 chars. With no notification tool, print the same message inside a `<<HUMAN_REQUIRED>>` ... `<<END>>` block so an outer harness can grep for it. Do NOT notify on normal between-stage transitions or successful completion.
 """
 
 
@@ -606,6 +712,8 @@ def scaffold(args: argparse.Namespace) -> str:
     parts.append(render_plan_landing_commit(args.slug, args.report_policy))
     parts.append(HANDOFF_CONVENTIONS)
     parts.append("## Context\n<FILL: why this track. Constraints. In scope. Out of scope / blocked externally.>\n")
+    parts.append(SWEPT)
+    parts.append(ONE_WAY_DOORS)
 
     parts.append("## Alternatives considered\n<FILL-OR-DELETE: 1-2 stage decompositions rejected, with reason. Delete this block if you only considered one decomposition.>\n")
 
@@ -616,7 +724,7 @@ def scaffold(args: argparse.Namespace) -> str:
         parts.append(render_stage(i, title, args.slug, args.report_policy))
 
     if args.reviewer != "none":
-        parts.append(REVIEWER_GATE)
+        parts.append(REVIEWER_GATE.replace("<plan-slug>", args.slug))
 
     parts.append("## Critical files (cross-stage index)\n<FILL: table of file -> stages that touch it>\n")
     parts.append(f"""## End-to-end verification (after final stage)
@@ -624,12 +732,13 @@ def scaffold(args: argparse.Namespace) -> str:
 generate `docs/plans/{args.slug}-verify-e2e.py` importing `_verify`.>
 
 ## End-to-end summary (parent fills after final stage)
-| Stage | Title | Tier | Effort | Model used | Commit SHA | Status | Report |
-|-------|-------|------|--------|------------|------------|--------|--------|
+| Stage | Title | Tier | Effort | Model used | Checks proven | Commit SHA | Status | Report |
+|-------|-------|------|--------|------------|---------------|------------|--------|--------|
 <!-- one row per stage. `Model used` is what the executor actually selected
 on its platform for the declared Tier/Effort (the executor fills this — the
 plan never prescribes model names). Used post-hoc to audit whether the
-platform mapping is well-calibrated. If <40% of rows are mechanical/standard,
+platform mapping is well-calibrated. `Checks proven` is `proven/total` from
+the parent's independent re-run of the stage's proofs. If <40% of rows are mechanical/standard,
 the decomposition is suspect — too many stages classified as judgment/critical
 defeats the cost-savings purpose. -->
 """)
@@ -653,6 +762,60 @@ defeats the cost-savings purpose. -->
     if repo_root:
         rendered = rendered.replace("<repo>", repo_root)
     return rendered
+
+
+def render_summary(args: argparse.Namespace, out: Path) -> str:
+    """The <<PRE_SCAFFOLD_SUMMARY>> block for non-interactive callers.
+
+    Printed by the script itself so the block exists whether or not the
+    planner remembers to emit it; the planner repeats it in its final message,
+    the only text `claude -p` writes to stdout.
+    """
+    stages = "\n".join(f"  - {title}" for title in args.stage)
+    reason = args.reviewer_reason.strip() or "—"
+    return (
+        "<<PRE_SCAFFOLD_SUMMARY>>\n"
+        f"slug: {args.slug}\n"
+        f"title: {args.title}\n"
+        f"stages:\n{stages}\n"
+        f"mode: {args.mode}\n"
+        f"working-tree: {args.working_tree}\n"
+        f"reviewer: {args.reviewer}  reason: {reason}\n"
+        f"report-policy: {args.report_policy}\n"
+        f"output: {out}\n"
+        "<<END>>"
+    )
+
+
+_VERSION_RX = re.compile(r"^VERSION = (\d+)", re.MULTILINE)
+
+
+def _verify_version(text: str) -> int:
+    # Copies vendored before versioning carry no VERSION line: treat as 0.
+    m = _VERSION_RX.search(text)
+    return int(m.group(1)) if m else 0
+
+
+def vendor_verify(plan_dir: Path) -> str:
+    """Write or refresh <plan_dir>/_verify.py from this skill's verify.py.
+
+    A missing or older vendored copy is replaced; an equal or newer one is
+    left alone. Returns a one-line status for the planner.
+    """
+    source = Path(__file__).resolve().parent / "verify.py"
+    target = plan_dir / "_verify.py"
+    source_text = source.read_text(encoding="utf-8")
+    current = _verify_version(source_text)
+    if target.exists():
+        vendored = _verify_version(target.read_text(encoding="utf-8", errors="replace"))
+        if vendored >= current:
+            return f"_verify.py v{vendored} already current, skipping: {target}"
+        action = f"refreshed v{vendored} -> v{current}"
+    else:
+        action = f"vendored v{current}"
+    with open(target, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(source_text)
+    return f"_verify.py {action}: {target}"
 
 
 def main() -> int:
@@ -772,6 +935,9 @@ def main() -> int:
         )
         return 3
 
+    if os.environ.get("STAGED_PLAN_NONINTERACTIVE") == "1":
+        print(render_summary(args, out), flush=True)
+
     out.parent.mkdir(parents=True, exist_ok=True)
     # Atomic write: stage in a sibling temp file, then os.replace into place.
     # Prevents partial files on interruption and matches POSIX atomic-rename
@@ -790,6 +956,8 @@ def main() -> int:
             pass
         raise
     print(f"Plan scaffolded: {out.resolve()}")
+
+    print(vendor_verify(out.parent))
 
     # Write _report-template.md alongside the plan (skip if already present —
     # the user may have customised it for this repo).
