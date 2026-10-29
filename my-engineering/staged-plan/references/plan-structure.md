@@ -34,7 +34,11 @@ Rejected stage *decompositions* (design choices live in One-way doors). Fill whe
 
 ## Global conventions
 
-Build, lint, and test gates exactly as CI runs them, plus repo-wide invariants (e.g. English only, no GPL in the main binary). These run in every stage on top of its checks.
+Build, lint, and test gates exactly as CI runs them, plus repo-wide invariants (e.g. English only, no GPL in the main binary). These run in every stage on top of its checks, and again at every integration.
+
+With concurrency above 1 the block also carries:
+- **Worktree setup** — what a fresh checkout needs before the gates run: the install command, and every untracked file the gates read (an env file, a local config) with where it is copied from. Copied files stay untracked.
+- **Shared runtime** — every port, database file, container, or cache a proof binds, and how two worktrees avoid colliding: usually a port and database path read from env, set per worktree in the setup.
 
 ## Stage block
 
@@ -56,7 +60,7 @@ The scaffold renders the hand-off; fill its `<FILL>` slots — plan title, absol
 
 ## Critical files
 
-Table `| File | Stages |` — every file any stage touches, with the stages that touch it. A file appearing in several stages marks a shared surface: double-check the ordering there.
+Table `| File | Stages |` — every file any stage touches, with the stages that touch it. A file appearing in several stages marks a shared surface: double-check the ordering there, and treat one listed by three or more stages as a hotspot to give a single owner (`SKILL.md` § Decompose into stages).
 
 ## End-to-end verification
 

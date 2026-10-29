@@ -38,7 +38,7 @@ V.assert_clean_tree()
 V.assert_commit_present(r"^feat: add B-backed impl")
 V.assert_only_files_touched(
     ["src/y_v2.ts", "src/y_v2.test.ts", "docs/plans/migration-x-stage-1-report.md"],
-    base_sha="HEAD~1",
+    subject=r"^feat: add B-backed impl",  # the stage's own commit, wherever it sits
 )
 V.run_gate("bun run build")
 V.run_proof("bun test src/y_v2.test.ts", expect=["parses ISO dates with offset"], check="C1.1")

@@ -10,13 +10,33 @@ A subagent's "gates green" is a self-report. The parent re-runs the stage's proo
 
 A fresh context is not independence on its own: whoever writes the reviewer's brief sets its scope. A reviewer spawned by the last stage's subagent would be pointed at that stage's diff, and a pass over four checks reads exactly like a pass over forty. So the parent dispatches it over `<plan landing commit>..HEAD` with every check of every stage, and the verdict comes back to the parent and the user — never to an author deciding about its own work.
 
+## Why the parent answers the reviewer's questions first
+
+Most open findings are questions the repository already answers — is this path reachable, does a caller depend on that value, what did the ADR decide. Sending them to a human costs a round-trip and teaches the human to skim the pending list. The parent holds the plan, the diff, and the tools to look, so it answers with evidence; what reaches a human is what a wrong guess would make expensive or unknowable: a regression, data loss, a high-risk or irreversible change, or context that lives outside the repo. The criteria name the stakes and leave the investigation to the parent's judgment.
+
+## Why delegated planning returns `<<PLAN_READY>>`
+
+An orchestrator that hands planning to a subagent sees only the subagent's final message, and it decides from that message whether to execute. A fixed block with the plan path, landing commit, gate result, and widest wave makes that decision mechanical; prose would make it a judgment call on every run. The planner stops at the block, so the caller becomes the parent and the stage subagents stay one level deep.
+
 ## Why retries carry "Tried and abandoned"
 
 A retry that only sees the failure excerpt tends to walk back into the approach that just failed. The discarded approaches exist nowhere else — not in the code, not in the plan — so the red subagent returns them and the parent passes them into the retry.
 
+## Why parallel work, serial integration
+
+Stages in flight never see each other's code, so the green each one reports was measured against a `HEAD` that is no longer current. Green-to-green holds only if it is measured where the code finally lands: the parent cherry-picks one stage at a time onto the main tree and re-runs that stage's proofs plus every global gate there. Disjoint file lists make the pick conflict-free; the re-run catches what file lists cannot — two stages that edit different files but break each other. A pick that goes red is dropped with `git reset --keep HEAD~1` and the stage retries from the new `HEAD`, so the main tree only ever holds integrated, green commits.
+
+## Why the worktree path is appended to the prompt
+
+The hand-off carries the absolute repo root. A subagent running in a worktree that follows it literally edits the main tree — under the parent's feet and outside its own branch. The `Working directory:` line rebinds the root for that stage; the `MAY NOT write outside your working tree` rule backs it.
+
+## Why worktree setup and shared runtime are declared
+
+A fresh worktree holds only tracked files: no installed dependencies, no untracked env file, no local database. The setup command makes a worktree able to run the gates. Two stages in flight also share the machine: proofs that bind the same port or open the same database file collide and fail in ways neither stage caused. Declaring them at plan time lets each worktree take its own port and database path from env.
+
 ## Why a shared file implies a dependency
 
-A stage that edits a file another stage also edits reads what that stage wrote, whatever `Depends on:` claims. An undeclared edge makes the red-stage message lie: it offers the user a stage to run that sits on top of the broken one. `assert_stage_graph` rejects the pair, and the waves it prints show how much of the plan could run side by side — the measure for whether parallel execution would pay.
+A stage that edits a file another stage also edits reads what that stage wrote, whatever `Depends on:` claims. An undeclared edge makes the red-stage message lie: it offers the user a stage to run that sits on top of the broken one. `assert_stage_graph` rejects the pair; that same guarantee is what lets two ready stages run in parallel without conflicting. The waves it prints show how much of the plan runs side by side — a widest wave of 1 on a plan with independent backlog items usually means a hotspot the decomposition left shared.
 
 ## Why one-way doors are recorded before the code
 

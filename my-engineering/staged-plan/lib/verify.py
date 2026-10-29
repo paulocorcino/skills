@@ -43,7 +43,7 @@ from pathlib import Path
 # Bumped whenever a primitive is added or its behaviour changes. scaffold.py
 # compares it with the repo's vendored copy and refreshes an older one.
 # Primitives are only ever added, so a refresh never breaks an older plan.
-VERSION = 3
+VERSION = 4
 
 # The Windows console code page (cp1252) cannot print every character a
 # gate emits; an unencodable one would crash summarize() mid-report.
@@ -263,9 +263,13 @@ class _Verifier:
     def assert_commit_present(
         self, subject_pattern: str, *, depth: int = 20, cwd: str | None = None
     ) -> bool:
-        """Last `depth` commits contain a subject matching `subject_pattern` (regex)."""
+        """Last `depth` commits contain a subject matching `subject_pattern` (regex).
+
+        The pattern is searched in the subject alone, so `^feat: ...` anchors
+        at the subject's start; the matched line reported keeps the hash.
+        """
         proc = subprocess.run(
-            ["git", "log", f"-{depth}", "--pretty=format:%H %s"],
+            ["git", "log", f"-{depth}", "--pretty=format:%h %s"],
             cwd=cwd,
             capture_output=True,
             text=True,
@@ -278,7 +282,7 @@ class _Verifier:
             )
         rx = re.compile(subject_pattern)
         for line in proc.stdout.splitlines():
-            if rx.search(line):
+            if rx.search(line.partition(" ")[2]):
                 return self._record(
                     f"commit present: /{subject_pattern}/", True, line[:80]
                 )
@@ -294,14 +298,35 @@ class _Verifier:
         *,
         base_sha: str = "HEAD~1",
         head_sha: str = "HEAD",
+        subject: str | None = None,
+        depth: int = 50,
         cwd: str | None = None,
     ) -> bool:
         """Files changed between base_sha..head_sha are a subset of allowlist.
 
-        For the standard pattern (one delivery commit per stage with the
-        post-stage report committed alongside the code), pass the report path
-        in the allowlist as well.
+        With `subject` (a regex on the commit subject), the range is that one
+        commit, found among the last `depth`: the check keeps holding after
+        later stages land on top of it. For the standard pattern (one delivery
+        commit per stage with the post-stage report committed alongside the
+        code), pass the report path in the allowlist as well.
         """
+        if subject is not None:
+            log = subprocess.run(
+                ["git", "log", f"-{depth}", "--pretty=format:%H %s"],
+                cwd=cwd, capture_output=True, text=True, encoding="utf-8", errors="replace",
+            )
+            rx = re.compile(subject)
+            sha = next(
+                (ln.split(" ", 1)[0] for ln in log.stdout.splitlines()
+                 if rx.search(ln.partition(" ")[2])),
+                None,
+            )
+            if sha is None:
+                return self._record(
+                    "scope: only declared files touched", False,
+                    f"no commit subject matches /{subject}/ in last {depth}",
+                )
+            base_sha, head_sha = f"{sha}~1", sha
         proc = subprocess.run(
             ["git", "diff", "--name-only", f"{base_sha}..{head_sha}"],
             cwd=cwd,
@@ -484,7 +509,7 @@ class _Verifier:
         re.DOTALL | re.MULTILINE,
     )
     _DEPENDS_RX = re.compile(r"^\*\*Depends on:\*\*(.*)$", re.MULTILINE)
-    _FILE_ITEM_RX = re.compile(r"^- `([^`]+)`")
+    _FILE_ITEM_RX = re.compile(r"^- `([^`]+)`(.*)$")
 
     def assert_stage_graph(self, plan_path: str) -> bool:
         """Stage `Depends on:` lines form a sound graph over the `Files:` lists.
@@ -492,8 +517,15 @@ class _Verifier:
         Every dependency points to an existing earlier stage, so plan order is
         a valid topological order and no cycle can exist. Two stages that
         declare the same file must be ordered by a dependency path: the later
-        one builds on what the earlier one wrote. On green, prints the waves
-        (stages whose dependencies are all in earlier waves) and the widest.
+        one builds on what the earlier one wrote. A directory or glob entry
+        (trailing `/`, or `*`) names where new files go and never conflicts.
+        With `- Concurrency:` above 1, a file three or more stages declare is a
+        hotspot that chains them all, and is rejected unless one listing says
+        `hotspot accepted: <extension point cost> / <wiring stage cost>` —
+        both single owners weighed and rejected, so the chain is chosen, not
+        inherited. On green, prints the
+        waves (stages whose dependencies are all in earlier waves) and the
+        widest.
         """
         name = f"stage graph: {plan_path}"
         p = _resolve(plan_path)
@@ -501,6 +533,7 @@ class _Verifier:
             return self._record(name, False, f"missing: {p}")
         text = p.read_text(encoding="utf-8", errors="replace")
         stages: dict[int, tuple[set[int], set[str]]] = {}
+        accepted: set[str] = set()
         problems: list[str] = []
         for m in self._STAGE_BLOCK_RX.finditer(text):
             n, body = int(m.group(1)), m.group(2)
@@ -526,6 +559,11 @@ class _Verifier:
                     fm = self._FILE_ITEM_RX.match(line)
                     if fm:
                         files.add(fm.group(1).strip())
+                        # Both owners must be weighed: a reason that rejects
+                        # only one leaves the other unexamined.
+                        note = fm.group(2).partition("hotspot accepted:")[2]
+                        if " / " in note:
+                            accepted.add(fm.group(1).strip())
                     elif line.strip():
                         break
             stages[n] = (deps, files)
@@ -546,9 +584,29 @@ class _Verifier:
             ancestors[n] = set(deps).union(*(ancestors[d] for d in deps))
             wave[n] = 1 + max((wave[d] for d in deps), default=0)
         ordered = sorted(stages)
+        shared = {
+            n: {f for f in files if not f.endswith("/") and "*" not in f}
+            for n, (_, files) in stages.items()
+        }
+        conc_m = re.search(r"^- Concurrency:\s*(\d+)", text, re.MULTILINE)
+        if conc_m and int(conc_m.group(1)) > 1:
+            owners: dict[str, list[int]] = {}
+            for n in ordered:
+                for f in shared[n]:
+                    owners.setdefault(f, []).append(n)
+            for f in sorted(owners):
+                if len(owners[f]) >= 3 and f not in accepted:
+                    listed = ", ".join(f"Stage {n}" for n in owners[f])
+                    problems.append(
+                        f"hotspot `{f}` is in {listed}: give it one owner "
+                        "(an extension point or a closing wiring stage), or, when one "
+                        "owner would weaken the design, mark a listing `hotspot accepted: "
+                        "<extension point cost> / <wiring stage cost>`; "
+                        "Concurrency stays as the user set it"
+                    )
         for i, a in enumerate(ordered):
             for b in ordered[i + 1:]:
-                for f in sorted(stages[a][1] & stages[b][1]):
+                for f in sorted(shared[a] & shared[b]):
                     if a not in ancestors[b]:
                         problems.append(
                             f"`{f}` is in Stage {a} and Stage {b}, but Stage {b} does not depend on Stage {a}"

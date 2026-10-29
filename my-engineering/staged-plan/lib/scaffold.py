@@ -51,7 +51,12 @@ from pathlib import Path
 
 
 EXECUTION_MODEL = """## Execution model (READ FIRST)
-Staged subagent execution (prompt chaining + gate checks). Do NOT run as one linear task.
+Staged subagent execution over a dependency graph: parallel work, serial
+integration, gate checks at every integration. Do NOT run as one linear task.
+Run it as written — each stage in its own fresh subagent, the reviewer gate
+as configured — whoever the parent is (a person's session or an agent running
+it for its caller). Whether staging pays off was settled when the plan was
+approved; a track that looks small still runs this way.
 
 0. **Pre-execution placeholder gate** (mandatory, before launching any stage). Run:
    ```
@@ -61,37 +66,75 @@ Staged subagent execution (prompt chaining + gate checks). Do NOT run as one lin
 1. **Parent** reads this plan end-to-end (orchestration needs the full picture).
    **Subagents** read only the sections their hand-off prompt names — never
    other stages' blocks. This split is a deliberate token optimization.
-2. Run Stage 0 (Pre-flight). If any gate is red on the baseline, abort.
-3. For each Stage N >= 1, launch a fresh subagent (see `## Executor adapter`):
+2. Run Stage 0 (Pre-flight) yourself — it is mechanical and needs no
+   subagent. If any gate is red on the baseline, abort.
+3. **Launch the frontier.** A stage is *ready* when every stage its
+   `Depends on:` names is integrated green. Launch ready stages in plan order,
+   never more in flight than `Concurrency` (`## Execution policy`), each as a
+   fresh subagent (see `## Executor adapter`):
    - prompt: the verbatim Hand-off prompt block for that stage
    - description: the stage title
-   - foreground, sequential, `model` selected per Tier/Effort (see `## Executor adapter` mapping table)
-4. On return, verify **independently** — the subagent's reported results are a
-   claim, not evidence. Re-run the stage's proofs yourself at `HEAD` (its
-   verify script, or every `Proof:` of its `**Checks:**` list) and confirm each
-   named test appears in the output as run — a filter matching nothing exits 0
-   on several runners. Then: build + gates clean, commit SHA present in
-   `git log`, post-stage report written, scope respected (only declared files
-   touched).
+   - `model` selected per Tier/Effort (see `## Executor adapter` mapping table)
+   - **in place** (foreground, the main working tree) when it is the only
+     stage in flight at launch; otherwise **isolated**: background, in its own
+     worktree of the current `HEAD` on a branch of its own
+     (`staged/{slug}/stage-N` when you create it; whatever name the
+     executor's isolation option reports otherwise — record it). Run
+     `## Global conventions` § Worktree setup there first, and append to the
+     prompt: `Working directory: <worktree path>`.
+   Before the first isolated launch, when the worktrees live inside the repo
+   (some executors place them there), add their directory to
+   `.git/info/exclude` so the clean-tree checks keep meaning something.
+   The gate in step 0 guarantees two ready stages never declare the same file:
+   a shared file forces a dependency between them.
+4. On each return, **integrate** — one stage at a time, in plan order among
+   the stages that have returned:
+   - isolated: `git cherry-pick <stage SHA>` onto the main working tree. A conflict means
+     the stage touched a file outside its list: `git cherry-pick --abort` and
+     treat it as a scope violation.
+   - then verify **independently** at the integrated `HEAD` — the subagent's
+     reported results are a claim, not evidence. Re-run the stage's proofs
+     yourself — its verify script, or every `Proof:` of its `**Checks:**` list
+     run as its own command, never folded into one file-level run — and
+     confirm each named test appears in the output as run — a filter
+     matching nothing exits 0 on several runners. Then: build + every gate of
+     `## Global conventions` clean (this is what catches two stages that edit
+     different files but break each other), commit present in `git log`,
+     post-stage report written, scope respected (only declared files touched).
+   - red after the stage reported green: `git reset --keep HEAD~1` drops the
+     pick, then the retry rule applies, from the current `HEAD`.
+   - green: copy `docs/plans/logs/` (and the stage report, when the report
+     policy is `gitignored`) from the worktree into the main tree, then
+     `git worktree remove --force <dir>` and `git branch -D <stage branch>` (`-d`
+     refuses: the cherry-picked commit has a different SHA).
 5. Green -> Mode handling:
-   - autonomous: launch Stage N+1 immediately.
-   - semi-autonomous: post the post-stage summary + `Resume? [y / edit / abort]`
-     and wait. `y` -> launch Stage N+1; `edit` -> user adjusts the next
-     hand-off then `y`; `abort` -> stop (committed work is preserved).
-   Red -> apply the `## Execution policy` retry rule.
+   - autonomous: recompute the ready stages and launch them (step 3).
+   - semi-autonomous: Concurrency is 1. Post the post-stage summary +
+     `Resume? [y / edit / abort]` and wait. `y` -> launch the next ready
+     stage; `edit` -> user adjusts the next hand-off then `y`; `abort` -> stop
+     (committed work is preserved).
+   Red -> apply the `## Execution policy` retry rule. A red stage holds only
+   the stages that descend from it through `Depends on:`; the others keep
+   launching.
 6. After the final stage, run `## End-to-end verification`, run the
-   `## Reviewer gate` if not `none`, and fill `## End-to-end summary`. Then
-   list any externally-blocked items still open (with reopen criteria) and,
+   `## Reviewer gate` if not `none`, and fill `## End-to-end summary` (the
+   `Commit SHA` column is the integrated SHA). Commit the filled plan and the
+   reviewer output together as the closing commit
+   `docs(plans): close {slug} with end-to-end summary`, so the tree ends
+   clean. Then list any externally-blocked items still open (with reopen criteria) and,
    if the working-tree policy was `stash-authorized`, remind the user to
    `git stash pop` (name the stash ref).
 
-Parent responsibilities (not delegable): launching stages in order, verifying
-green between stages, running end-to-end verification, running the reviewer
-gate if configured, producing the summary.
+Parent responsibilities (not delegable): launching ready stages, integrating
+them one at a time, verifying green at every integration, running end-to-end
+verification, running the reviewer gate if configured, producing the summary.
+The parent alone writes to the main working tree while isolated stages run.
 
 Resuming after a red stage: each hand-off prompt only assumes prior commits
 exist in `git log`, not that they came from subagents. If Stage K was fixed
-manually, relaunch Stage K+1 unchanged. Never re-run committed stages.
+manually, its dependents become ready unchanged. Never re-run integrated
+stages; remove the leftover worktrees and branches of unintegrated stages
+(`git worktree list`) before relaunching.
 
 ### Resource selection vocabulary (read before launching each stage)
 
@@ -185,10 +228,16 @@ versioned**: `docs/plans/logs/` is gitignored via the Plan landing commit.
 ## Executor adapter
 
 Each stage runs in a fresh context window via whatever delegated-agent
-mechanism the executor provides (Claude Code: `Agent` tool with
-`subagent_type: general-purpose`, foreground, sequential; Codex / others: the
-equivalent fresh-window mechanism, or inline in a clean session if no delegate
-mechanism exists).
+mechanism the executor provides. Claude Code: `Agent` tool with
+`subagent_type: general-purpose`; an isolated stage adds `isolation: "worktree"`
+and runs in the background — launch every ready stage in one message so they
+run concurrently, and take the worktree path and branch from the tool's
+result. Codex / others: the equivalent fresh-window mechanism plus
+`git worktree add <dir> -b staged/<slug>/stage-N HEAD`. Before cleanup, record the
+worktree path and branch each isolated stage reports. An executor without
+background delegation or without worktrees runs at Concurrency 1: in place,
+one stage at a time, inline in a clean session if no delegate mechanism
+exists.
 
 **Model & effort selection:** the plan declares `Tier:` and `Effort:` per stage
 (see `## Execution model` § Resource selection vocabulary). The executor maps
@@ -243,7 +292,18 @@ def render_plan_landing_commit(slug: str, report_policy: str) -> str:
     parts.append(_PLAN_LANDING_COMMIT_BODY.format(slug=slug, report_logs_note=logs_note))
     return "".join(parts)
 
-def render_global_conventions(slug: str, report_policy: str) -> str:
+_PARALLEL_CONVENTIONS = """\
+- Worktree setup: <FILL: command an isolated stage runs once in its fresh worktree before any gate (e.g. `npm ci`), plus every untracked file the gates need and where it is copied from (never committed); `none` when the checkout alone suffices>
+- Shared runtime: <FILL: ports, database files, containers or caches the proofs bind, and how two stages in flight avoid colliding (e.g. port and database path taken from env per worktree); `none` when no proof binds a shared resource>
+"""
+
+
+def render_global_conventions(slug: str, report_policy: str, concurrency: int = 1) -> str:
+    body = _global_conventions_body(slug, report_policy)
+    return body + _PARALLEL_CONVENTIONS if concurrency > 1 else body
+
+
+def _global_conventions_body(slug: str, report_policy: str) -> str:
     if report_policy == "gitignored":
         return f"""## Global conventions
 - Build gate: <FILL: cmd>
@@ -345,7 +405,7 @@ applies this decision tree verbatim:
 2. Is the fix mechanical (one obvious right answer, no design choice)
    AND fully inside the plan's declared file list?
    - Yes -> classify `must-fix`.
-   - No  -> classify `human-judgment`.
+   - No  -> classify `open`.
 
 Arbiter records both answers per finding in the output md (auditable).
 Arbiter does NOT edit code and does NOT replan.
@@ -357,7 +417,7 @@ Fix-subagent receives only the `must-fix` items + their target files.
 - For each item: writes a `fix note` -- what changed, line(s), and one
   sentence linking the change to the original finding.
 - If a `must-fix` proves to require out-of-scope work or a design choice,
-  reclassify it as `human-judgment` and skip it. Do NOT block sibling fixes.
+  reclassify it as `open` and skip it. Do NOT block sibling fixes.
 After the round: re-run every declared gate (build/lint/test/etc.). Gate
 failure does NOT trigger another fix round -- the failure goes into the
 pending list and the verdict degrades.
@@ -368,8 +428,23 @@ Run a second reviewer pass (same level: light/deep) only if EITHER:
 - The fix round modified files outside the declared scope of the
   originating `must-fix` finding (scope-creep signal).
 
-Any *new* finding from re-review goes straight to the pending list of the
-next sequence file. Re-review does NOT trigger another fix round.
+Any *new* finding from re-review is resolved as below, in the next sequence
+file. Re-review does NOT trigger another fix round.
+
+### Resolve before escalating (parent)
+Every `open` finding, and every question the reviewer leaves open, is the
+parent's to answer first — the code, the plan, the repo's docs and git
+history usually hold the answer. Record each answer with its evidence under
+`## Resolved by the parent`; an answer that turns into a mechanical in-scope
+fix is applied and re-gated like a fix-round item.
+A finding reaches a human only when acting on it risks one of:
+- a regression for someone who depends on today's behaviour;
+- loss or corruption of data;
+- a high-risk or irreversible change (security, public contract, migration);
+- context nothing in the repo or plan provides.
+Those become `human-required`, each naming its criterion. When unsure, the
+cost of a wrong guess decides: one of the four above goes to the human,
+anything cheaper to reverse stays with the parent.
 
 ### Output file (always written when this gate runs)
 Path: `docs/plans/reports/<plan-slug>_reviewer_<seq>.md`
@@ -384,26 +459,29 @@ Top of file: final verdict in
 Body sections (in order):
 - `## Reviewer verdict` -- raw reviewer output, verbatim.
 - `## Arbiter classification` -- table per finding: `file:line`, severity,
-  class (must-fix / nice-to-have / human-judgment), decision-tree answers
+  class (must-fix / nice-to-have / open), decision-tree answers
   (defect? yes/no -- mechanical+in-scope? yes/no), 1-line reason.
 - `## Fixes applied` -- one entry per `must-fix` corrected, with the fix
   note (what changed, lines, link to finding).
-- `## Pending` -- every `human-judgment` finding + every `must-fix`
-  reclassified to `human-judgment` during the fix round + any new finding
-  from re-review. Each entry:
+- `## Resolved by the parent` -- every `open` finding the parent answered:
+  the question, the answer, its evidence (`file:line`, command + output),
+  and what changed if anything.
+- `## Pending` -- every `human-required` item. Each entry:
   - `file:line`
   - reviewer's original finding (short quote)
-  - arbiter's reason for human classification
-  - suggested action (may be "decide whether to address")
+  - the criterion that needs a human (regression / data loss / high-risk /
+    missing context) and what the parent already established
+  - the decision the human is asked to make
 
 Verdict mapping:
 - `pass` / `pass-with-notes` -- reviewer's original verdict, no findings
   needed fixing.
 - `pass-with-fixes` -- all `must-fix` corrected, no pending items.
 - `pass-with-pending` -- corrections completed (or none needed), but
-  `Pending` section is non-empty.
+  `Pending` holds `human-required` items.
 - `fail` / `blocked` -- reviewer's verdict was `fail`/`blocked`, OR gates
-  failed after the fix round. Parent stops the plan and surfaces the md
+  failed after the fix round. Parent stops the plan and surfaces (to the
+  user, or to its caller when it runs autonomously) the md
   file path to the user.
 """
 
@@ -436,8 +514,12 @@ build to these rows; a stage that finds a new door records it in its report.
 HANDOFF_CONVENTIONS = """## Hand-off conventions (apply to every stage)
 
 **Authorization:**
-- MAY commit directly after all verifications pass.
+- MAY commit directly after all verifications pass — on the worktree's
+  branch when the prompt names a `Working directory:`.
 - MAY NOT push.
+- MAY NOT write outside your working tree — the worktree, when the prompt
+  names one; the main working tree belongs to the parent while stages run in
+  parallel.
 - MAY NOT modify files outside the stage's declared file list.
 - MAY NOT touch pre-existing unrelated working-tree edits.
 - MAY NOT skip gates or use --no-verify / bypass hooks.
@@ -540,6 +622,11 @@ _HANDOFF_HEADER = """**Hand-off prompt for Stage {n}:**
 >
 > Repo root: <FILL: absolute path>
 > Branch: <FILL: branch>
+> Your working tree is `git rev-parse --show-toplevel` from where you start.
+> When it differs from the repo root above (or the prompt ends with a
+> `Working directory:` line), you are in an isolated worktree: that path
+> replaces the repo root everywhere, and you commit on the branch checked
+> out there.
 > Platform: <FILL: os>  (Windows: use bash syntax, forward slashes)
 >
 {prior_status}>
@@ -548,10 +635,12 @@ _HANDOFF_HEADER = """**Hand-off prompt for Stage {n}:**
 
 _PRIOR_STATUS_FIRST = "> Status: this is the first feature stage; no prior stage commits exist beyond Stage 0 baseline.\n"
 _PRIOR_STATUS_LATER = (
-    "> Status: Stages 1..{prev} committed (confirm with `git log --oneline -{prev}`).\n"
-    "> Prior stages' work is reflected in: (1) the actual code state — run\n"
-    "> `git log --oneline -{prev}` and `git diff HEAD~{prev} HEAD --stat` if you need\n"
-    "> to see what changed; (2) `## Critical files` in the plan (cross-stage index);\n"
+    "> Status: every stage your block's `Depends on:` names — and their own\n"
+    "> prerequisites — is integrated green at your starting `HEAD`. Other stages\n"
+    "> may be integrated, or still running elsewhere: build only on what your\n"
+    "> dependencies wrote. Prior stages' work is reflected in: (1) the actual\n"
+    "> code state — `git log --oneline` shows the integrated stage commits, and\n"
+    "> `git show --stat <sha>` what each changed; (2) `## Critical files` in the plan (cross-stage index);\n"
     "> (3) prior stage reports under `docs/plans/<slug>-stage-K-report.md` if you\n"
     "> need detail on a specific surprise or deviation. Do NOT read other stages'\n"
     "> BEGIN/END blocks for prior context — git is the source of truth.\n"
@@ -562,7 +651,7 @@ def _handoff_header(n: int) -> str:
     if n <= 1:
         prior = _PRIOR_STATUS_FIRST
     else:
-        prior = _PRIOR_STATUS_LATER.format(prev=n - 1)
+        prior = _PRIOR_STATUS_LATER
     return _HANDOFF_HEADER.format(n=n, prior_status=prior)
 
 
@@ -685,7 +774,15 @@ Gates from `## Global conventions` also run.
 """
 
 
-def render_execution_policy(mode: str, working_tree: str, reviewer: str, reviewer_reason: str) -> str:
+def render_execution_policy(mode: str, working_tree: str, reviewer: str, reviewer_reason: str, concurrency: int) -> str:
+    if concurrency > 1:
+        concurrency_line = (
+            f"- Concurrency: {concurrency} — at most {concurrency} ready stages in flight; "
+            "a stage alone in flight runs in place, the others each in an isolated worktree. "
+            "Integration stays one stage at a time."
+        )
+    else:
+        concurrency_line = "- Concurrency: 1 — one stage at a time, in place."
     reviewer_line = f"- Reviewer: {reviewer}"
     if reviewer != "none" and reviewer_reason:
         reviewer_line += f"  # {reviewer_reason}"
@@ -693,16 +790,17 @@ def render_execution_policy(mode: str, working_tree: str, reviewer: str, reviewe
     if mode == "semi-autonomous":
         mode_extra = (
             "\n  Between-stage checkpoint posted by parent — format:\n"
-            "    `✓ Stage N done — {sha} \"{subject}\" | Files: ... | Gates: build ✓ test ✓ ... | Report: {report path} | Next: Stage N+1 — {title} | Resume? [y / edit / abort]`\n"
+            "    `✓ Stage N done — {sha} \"{subject}\" | Files: ... | Gates: build ✓ test ✓ ... | Report: {report path} | Next: Stage K — {title} (next ready stage) | Resume? [y / edit / abort]`\n"
             "    `y` -> launch next; `edit` -> user adjusts next hand-off; `abort` -> stop (committed work preserved)."
         )
     return f"""## Execution policy (fixed defaults unless user overrode)
 - Mode: {mode}{mode_extra}
-- Commit authorization: per-stage-direct
-- On red: auto-retry-up-to-2 — cap of 2 retries; each retry passes the prior failure excerpt plus the subagent's `Tried and abandoned` list, and narrows the instruction to the same file list. NEVER retry on scope violations, pre-commit hook rejections, test-weakening, or hook bypass attempts (escalate immediately). Never promote the stage's Tier on retry: a `mechanical` stage failing twice means the classification was wrong — stop and replan. On exhaustion: stop and surface, naming the remaining stages whose `Depends on:` excludes the red stage (the user may choose to run them).
+{concurrency_line}
+- Commit authorization: per-stage-direct (an isolated stage commits on its worktree branch; the parent cherry-picks it)
+- On red: auto-retry-up-to-2 — cap of 2 retries; each retry passes the prior failure excerpt plus the subagent's `Tried and abandoned` list, and narrows the instruction to the same file list; an isolated retry starts from a fresh worktree of the current `HEAD`. NEVER retry on scope violations, pre-commit hook rejections, test-weakening, or hook bypass attempts (escalate immediately). Never promote the stage's Tier on retry: a `mechanical` stage failing twice means the classification was wrong — stop and replan. On exhaustion: stop launching the red stage's descendants, keep running and integrating the stages that do not descend from it, and surface once nothing else can run.
 - Working-tree policy: {working_tree} — per-state behavior is described inline in `## Stage 0`.
 {reviewer_line}
-- Human-interaction stops: whenever execution halts awaiting a human decision (reviewer verdict `fail`/`blocked` after fix round; retry exhausted; scope violation / hook-bypass escalation; dirty-tree mid-run), the executor MUST send a push notification BEFORE yielding control (Claude Code: `PushNotification`; otherwise the executor's equivalent). Message format: `"Plan <slug>: <reason> — see <report-or-file path>"`, under ~120 chars. With no notification tool, print the same message inside a `<<HUMAN_REQUIRED>>` ... `<<END>>` block so an outer harness can grep for it. Do NOT notify on normal between-stage transitions or successful completion.
+- Human-interaction stops: an escalation (scope violation, hook bypass, dirty tree, reviewer `fail`/`blocked`) launches nothing new — the stages in flight return and integrate, then execution halts; retry exhaustion halts once nothing else can run (see On red). Whenever execution halts awaiting a human decision (reviewer verdict `fail`/`blocked` after fix round; retry exhausted; scope violation / hook-bypass escalation; dirty-tree mid-run), the executor MUST send a push notification BEFORE yielding control (Claude Code: `PushNotification`; otherwise the executor's equivalent). Message format: `"Plan <slug>: <reason> — see <report-or-file path>"`, under ~120 chars. With no notification tool, print the same message inside a `<<HUMAN_REQUIRED>>` ... `<<END>>` block so an outer harness can grep for it; an autonomous parent (an agent running this plan for its own caller) ends its final message with that block, so the caller sees it. `pass-with-pending` is not a stop: the run completes, and the `human-required` items travel in the final message. Do NOT notify on normal between-stage transitions or successful completion.
 """
 
 
@@ -711,7 +809,7 @@ def scaffold(args: argparse.Namespace) -> str:
     parts.append(f"# {args.title} - Staged Execution Plan\n")
     parts.append(f"<!-- scaffolded {date.today().isoformat()} via staged-plan/lib/scaffold.py -->\n")
     parts.append(EXECUTION_MODEL.replace("{slug}", args.slug))
-    parts.append(render_execution_policy(args.mode, args.working_tree, args.reviewer, args.reviewer_reason))
+    parts.append(render_execution_policy(args.mode, args.working_tree, args.reviewer, args.reviewer_reason, args.concurrency))
     parts.append(render_plan_landing_commit(args.slug, args.report_policy))
     parts.append(HANDOFF_CONVENTIONS)
     parts.append("## Context\n<FILL: why this track. Constraints. In scope. Out of scope / blocked externally.>\n")
@@ -720,7 +818,7 @@ def scaffold(args: argparse.Namespace) -> str:
 
     parts.append("## Alternatives considered\n<FILL-OR-DELETE: 1-2 stage decompositions rejected, with reason. Delete this block if you only considered one decomposition.>\n")
 
-    parts.append(render_global_conventions(args.slug, args.report_policy))
+    parts.append(render_global_conventions(args.slug, args.report_policy, args.concurrency))
     parts.append(STAGE_0.replace("{slug}", args.slug))
 
     for i, title in enumerate(args.stage, start=1):
@@ -784,6 +882,7 @@ def render_summary(args: argparse.Namespace, out: Path) -> str:
         f"mode: {args.mode}\n"
         f"working-tree: {args.working_tree}\n"
         f"reviewer: {args.reviewer}  reason: {reason}\n"
+        f"concurrency: {args.concurrency}\n"
         f"report-policy: {args.report_policy}\n"
         f"output: {out}\n"
         "<<END>>"
@@ -822,6 +921,10 @@ def vendor_verify(plan_dir: Path) -> str:
 
 
 def main() -> int:
+    # The summary echoes stage titles; a Windows console code page (cp1252)
+    # cannot encode every character in them and would crash the run.
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     p = argparse.ArgumentParser(description="Scaffold a staged-plan markdown.")
     p.add_argument("--slug", required=True, help="plan slug (e.g. migration-x)")
     p.add_argument("--title", required=True, help="plan title (e.g. 'Migrate module Y from A to B')")
@@ -835,6 +938,12 @@ def main() -> int:
     )
     p.add_argument("--reviewer", default="none", choices=["none", "light", "deep"])
     p.add_argument("--reviewer-reason", default="", help="why this reviewer level was chosen")
+    p.add_argument(
+        "--concurrency",
+        type=int,
+        default=3,
+        help="max ready stages in flight at once (default 3; 1 = strictly sequential). Semi-autonomous mode always runs at 1.",
+    )
     p.add_argument(
         "--report-policy",
         default="committed",
@@ -870,6 +979,14 @@ def main() -> int:
     if len(args.stage) < 1:
         print("error: at least one --stage required", file=sys.stderr)
         return 2
+
+    if args.concurrency < 1:
+        print("error: --concurrency must be at least 1", file=sys.stderr)
+        return 2
+    # The semi-autonomous checkpoint is a human look between stages; parallel
+    # stages would return past it.
+    if args.mode == "semi-autonomous":
+        args.concurrency = 1
 
     if args.reviewer != "none" and not args.reviewer_reason.strip():
         print(
@@ -938,8 +1055,9 @@ def main() -> int:
         )
         return 3
 
-    if os.environ.get("STAGED_PLAN_NONINTERACTIVE") == "1":
-        print(render_summary(args, out), flush=True)
+    # Printed on every run: a delegated planner opens its final message with
+    # it whether or not the caller could set STAGED_PLAN_NONINTERACTIVE.
+    print(render_summary(args, out), flush=True)
 
     out.parent.mkdir(parents=True, exist_ok=True)
     # Atomic write: stage in a sibling temp file, then os.replace into place.

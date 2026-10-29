@@ -13,9 +13,11 @@ This skill produces a plan: investigate the codebase (read-only), design stages,
 
 When the user asks to "execute the plan" or "run Stage N", point them to the plan file: its `## Execution model` and hand-off prompts carry everything the executor (the user or another agent) needs.
 
+**Delegated planning is the default shape:** an agent hands this skill to a subagent, the subagent plans and returns `<<PLAN_READY>>` (§ End of Phase 1.5), and the calling agent then executes the plan itself as the parent, launching the stage subagents. The planner never executes, so subagents never nest.
+
 ## When this applies
 
-This is **prompt chaining with sectioning + gate checks** in Anthropic's effective-agents taxonomy: subtasks pre-planned, run strictly sequentially, each gate passing before the next. It fits when:
+This is **sectioning + parallelization with gate checks** in Anthropic's effective-agents taxonomy: subtasks pre-planned as a dependency graph, each launched once its prerequisites are integrated green, independent ones in parallel, integrated one at a time. It fits when:
 
 - the track is too large for one session but splits into 3-7 deliverables knowable at plan time;
 - each stage benefits from contextual isolation;
@@ -47,7 +49,8 @@ A track that fits one session runs inline; a track whose subtask shape is only k
 - **Size by reading, not by minutes:** `wc -c` / 4 over the files the stage reads, written on its `**Size:**` line. Keep a stage under ~60k tokens of reading so the rest of the window absorbs iteration (test output, fixes, retries); above ~100k, split. Cut where the code surface changes — the next stage reads different code anyway, so nothing is read twice.
 - **Too small to stage:** when the stages' summed `Size` stays under ~30k tokens, the whole track fits one session and staging adds only overhead. The approval summary then leads with that recommendation — `cancel`, and do the work directly without a staged plan — and offers the staged plan as the alternative. A non-interactive caller already asked for a plan: scaffold anyway and say so in the final message.
 - **Order by blast radius:** internal/pure-refactor first, public API/UI last, externally-blocked work isolated in a trailing stage. **Risk first overrides it:** an unproven assumption (feasibility, library behaviour, performance) gets a spike stage at the front, so a failure surfaces before later stages invest in it.
-- **`Depends on:`** names the earlier stages this stage builds on: it reads or edits what they wrote, or must keep one of their checks green. A file two stages share makes the later depend on the earlier. `none` when it builds only on the landing commit. Execution stays sequential — the parent uses it to tell the user which remaining stages a red stage does not block.
+- **`Depends on:`** names the earlier stages this stage builds on: it reads or edits what they wrote, or must keep one of their checks green. A file two stages share makes the later depend on the earlier. `none` when it builds only on the landing commit. The parent launches a stage once every stage it names is integrated green: an edge too many serializes the plan, an edge too few starts a stage on code that is not there yet.
+- **Hotspots:** a file most stages would touch — route table, nav layout, schema file, shared test helpers, lockfile, i18n catalog — chains every stage that lists it, so none of them runs in parallel. With Concurrency above 1, every file sits in at most two stages' lists; the gate rejects a third. Resolve each hotspot in the decomposition — Concurrency stays at its fixed default unless the user sets it. Give a hotspot one owner: an early stage that turns it into an extension point (a folder later stages add new files to, such as a schema split into one file per model), or a closing wiring stage that registers what the others built unwired. An unwired stage claims what its code does where its code ends, proved by calling the handler or function directly; the wiring stage owns the boundary claims (route reachable, status through the dispatcher). Each proof still reaches its own claim's level. Width never buys a weaker design: when one owner would cost correctness — dropping a foreign key, duplicating logic, bypassing a framework convention — keep the chain and mark a listing `hotspot accepted: <what an extension point would cost> / <what a closing wiring stage would cost>` — both owners, each with its cost. Folders where stages only add new files are listed as `dir/` or a glob, which never conflict.
 - **Scope by file list:** each stage declares its files explicitly; the subagent STOPs and reports when the work needs a file outside the list. This replaces numeric budgets, which no subagent can observe at runtime.
 - **Tier and Effort** per stage, with a mandatory 1-2 line `Tier rationale:` naming the decision or risk that justifies it. The scaffold seeds `standard / standard`:
 
@@ -91,12 +94,12 @@ Reviewer: deep — recommended by: 7 stages + public contract + multi-repo. Over
 
 Phase 1 investigation is **read-only by contract**: no file edits, no `scaffold.py`, no file-creating shell command until the user approves the materialization. The gate lives in the skill so behaviour is identical in every agent, with or without a plan mode.
 
-Present a short summary — slug, title, stage list, mode, working-tree, reviewer + reason, report-policy, plus any sweep theme that would grow scope and any one-way door with a live alternative, each with your recommendation — and request approval through **exactly one** gate. First run `echo "${STAGED_PLAN_NONINTERACTIVE:-0}"`; a gate tool your agent loads on demand counts as available once loaded.
+Present a short summary — slug, title, stage list with each stage's `Depends on:`, mode, concurrency, working-tree, reviewer + reason, report-policy, plus any sweep theme that would grow scope and any one-way door with a live alternative, each with your recommendation — and request approval through **exactly one** gate. First run `echo "${STAGED_PLAN_NONINTERACTIVE:-0}"`; a gate tool your agent loads on demand counts as available once loaded.
 
-- **Non-interactive** (the echo prints `1` — set explicitly by the calling harness, e.g. `backlog-claude-runner` running a headless session): no human can answer, so scope-growing themes and live doors take your recommendation, recorded in the plan; scaffold and fill straight away. `scaffold.py` prints the `<<PRE_SCAFFOLD_SUMMARY>>` block itself; **open your final message with that same block**, since a headless run (`claude -p`, `codex exec`) typically writes only the final message to stdout. Enter this mode only when the caller set the variable.
+- **Delegated or non-interactive** — you run as a subagent of another agent, or the echo prints `1`, or the request itself carries `STAGED_PLAN_NONINTERACTIVE=1` (an orchestrator cannot set a subagent's environment, so it says so in the prompt): the caller's request is the approval. Scope-growing themes and live doors take your recommendation, recorded in the plan; scaffold and fill straight away. `scaffold.py` prints the `<<PRE_SCAFFOLD_SUMMARY>>` block itself; **open your final message with that same block**, since a headless run (`claude -p`, `codex exec`) or a subagent return typically carries only the final message.
 - **Plan mode active, with a plan-approval tool** (Claude Code: `ExitPlanMode`): submit the summary through it. Its approval is the gate. The summary is a few lines; the scaffold renders the full plan.
 - **Interactive, with a structured-question tool** (Claude Code: `AskUserQuestion`): ask with the summary and options `[scaffold / adjust / cancel]`. `scaffold` → proceed; `adjust` → revise and re-gate; `cancel` → stop. The gate runs even when the plan looks obvious — it is the user's only checkpoint before the landing commit.
-- **No gate tool** (an agent without one, or a headless run without the variable): end your turn with the summary as the final message, closing with `Reply scaffold / adjust / cancel`. The user's next message is the gate; nothing is written before it.
+- **No gate tool, a human on the other side** (a chat without a question tool): end your turn with the summary as the final message, closing with `Reply scaffold / adjust / cancel`. The user's next message is the gate; nothing is written before it.
 
 ### Fixed defaults — recorded verbatim under `## Execution policy`
 
@@ -106,6 +109,7 @@ Present a short summary — slug, title, stage list, mode, working-tree, reviewe
 4. **Working-tree policy:** `clean-required` when `git status` is clean. Other states: `references/working-tree.md`.
 5. **Reviewer gate:** per the recommendation above.
 6. **Report policy:** `committed`, or `gitignored` when `.gitignore` already excludes report files (e.g. `*-report.md`, `docs/plans/*-report.md`). Read `.gitignore` to decide.
+7. **Concurrency:** `3` — up to three ready stages in flight; a stage alone in flight runs in place, two or more each run in their own worktree; integration is one at a time. The plan's `## Global conventions` then carries a worktree setup command and the shared runtime resources (ports, database files) the proofs bind. `semi-autonomous` always runs at `1`.
 
 Deviate only when the user explicitly overrides in the current conversation.
 
@@ -137,10 +141,11 @@ python3 <skill-dir>/lib/scaffold.py \
   --mode autonomous \
   --working-tree clean-required \
   --reviewer none \
-  --report-policy committed
+  --report-policy committed \
+  --concurrency 3
 ```
 
-Flags: `--mode autonomous|semi-autonomous` · `--working-tree clean-required|stash-authorized|integrate-existing|abort-until-clean` · `--reviewer none|light|deep` (+ `--reviewer-reason`) · `--report-policy committed|gitignored`. The script refuses to overwrite an existing file (exit 3) unless `--force` — run it once, then edit; a re-run destroys the fill.
+Flags: `--mode autonomous|semi-autonomous` · `--working-tree clean-required|stash-authorized|integrate-existing|abort-until-clean` · `--reviewer none|light|deep` (+ `--reviewer-reason`) · `--report-policy committed|gitignored` · `--concurrency N`. The script refuses to overwrite an existing file (exit 3) unless `--force` — run it once, then edit; a re-run destroys the fill.
 
 Fill rules:
 
@@ -160,7 +165,24 @@ Plan file: [<plan-slug>.md](/absolute/path/to/docs/plans/<plan-slug>.md#L1)
 
 ## Phase 1.5 — Plan landing commit
 
-The gate's approval — or a non-interactive run — is the user's request for this commit: it is part of the skill's output, so make it without asking again. The **planner** (not a subagent) makes one commit landing the plan, `_verify.py` and `_report-template.md` (both written by the scaffold), any verify scripts, and the `.gitignore` rule. The procedure — including the `.gitignore` pre-check — is rendered into the plan's `## Plan landing commit` section; follow it there. Afterwards the working tree is clean and Phase 2 can start.
+The gate's approval — or a delegated run — is the request for this commit: it is part of the skill's output, so make it without asking again. The **planner** (never a stage subagent) makes one commit landing the plan, `_verify.py` and `_report-template.md` (both written by the scaffold), any verify scripts, and the `.gitignore` rule. The procedure — including the `.gitignore` pre-check — is rendered into the plan's `## Plan landing commit` section; follow it there. Afterwards the working tree is clean and Phase 2 can start.
+
+### End of Phase 1.5
+
+Close your final message with the block a calling agent reads to start execution, after running the plan's pre-execution gate (`## Execution model` step 0) once more on the landed plan:
+
+```
+<<PLAN_READY>>
+plan: <absolute path to the plan file>
+landing-commit: <sha>
+gate: pass | fail (<the failing check>)
+widest-wave: <N, from assert_stage_graph>
+decisions-without-gate: <one line each, or none>
+next: run the plan's ## Execution model as the parent
+<<END>>
+```
+
+`next:` stays exactly as shown — sizing advice belongs in the plan's `## Context`, where the caller weighs it before approving, not in the hand-back. A caller that forbade the commit gets `landing-commit: none (caller forbade it)` and lands the plan itself before Stage 1. A `gate: fail` block tells the caller not to execute; fix the plan and land it again before returning when you can.
 
 ## Phase 2 — Execution
 
@@ -173,3 +195,4 @@ Phase 2 runs from the plan file alone: `## Execution model`, `## Execution polic
 - One stage per subagent, with no nested subagents: contextual isolation and the green-to-green audit are the point.
 - Hand-offs stage files by explicit path and tell the subagent to grep for symbols, since line numbers drift once Stage 1 lands.
 - The parent re-runs every proof itself; a subagent's report is a claim, not evidence.
+- Stages run in parallel only in isolation; integration is serial, and the parent re-runs proofs and gates at the integrated `HEAD`.
