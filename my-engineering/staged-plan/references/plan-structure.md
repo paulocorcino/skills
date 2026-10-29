@@ -42,7 +42,7 @@ Build, lint, and test gates exactly as CI runs them, plus repo-wide invariants (
 |---|---|
 | `Tier` / `Effort` / `Tier rationale` | Per the classification table in `SKILL.md`; the rationale names the specific decision or risk. |
 | `Size` | `~Nk tokens` = `wc -c` / 4 over the files the stage reads. A floor: it ranks stages correctly even though iteration adds more. |
-| `Depends on` | Pre-filled with the previous stage; narrow it to the real prerequisites. |
+| `Depends on` | Per `SKILL.md` § Decompose into stages. Stage 1 is pre-filled `none`. |
 | `Items` / `Scope` | Backlog ids; one sentence naming the observable outcome. |
 | `Files` | Every file the stage creates, edits, or deletes, each with what changes and why. This list is the scope boundary. |
 | `Order of operations` | Concrete steps up to, not including, the rendered final step (proofs + gates → report → commit). Where a proof is a new test, its step comes before the implementation step. |

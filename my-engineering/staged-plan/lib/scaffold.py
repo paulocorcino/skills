@@ -55,7 +55,7 @@ Staged subagent execution (prompt chaining + gate checks). Do NOT run as one lin
 
 0. **Pre-execution placeholder gate** (mandatory, before launching any stage). Run:
    ```
-   python3 -B -c "import sys; sys.path.insert(0,'docs/plans'); from _verify import V; V.assert_no_placeholders('docs/plans/{slug}.md'); sys.exit(V.summarize())"
+   python3 -B -c "import sys; sys.path.insert(0,'docs/plans'); from _verify import V; V.assert_no_placeholders('docs/plans/{slug}.md'); V.assert_stage_graph('docs/plans/{slug}.md'); V.assert_distinct_proofs('docs/plans/{slug}.md'); sys.exit(V.summarize())"
    ```
    (Use `python` where `python3` is absent, common on Windows.) If non-zero, abort and surface the offending lines. Fix or delete the flagged blocks; do NOT bypass.
 1. **Parent** reads this plan end-to-end (orchestration needs the full picture).
@@ -631,10 +631,13 @@ def render_stage(n: int, title: str, slug: str, report_policy: str) -> str:
             f"`Commit:` slot as `_filled by parent_` — the End-to-end summary table is the "
             f"canonical source for that mapping."
         )
-    # Sequential execution is the default contract; the planner edits this
-    # line when the real dependency set differs. The parent reads it only to
-    # tell the user which remaining stages a red stage does NOT block.
-    depends_on = "none" if n <= 1 else f"Stage {n - 1}"
+    # Left unfilled on purpose: a pre-filled previous stage anchors the
+    # planner to a chain. `assert_stage_graph` validates the filled set; the
+    # parent reads it to tell the user which stages a red stage does NOT block.
+    depends_on = (
+        "none" if n <= 1 else
+        "<FILL: earlier stages this stage builds on, e.g. `Stage 1, Stage 3`; `none` when it builds only on the landing commit>"
+    )
 
     return f"""<!-- BEGIN STAGE {n} -->
 ## Stage {n} - {title}

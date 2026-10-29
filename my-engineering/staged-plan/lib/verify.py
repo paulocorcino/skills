@@ -43,7 +43,7 @@ from pathlib import Path
 # Bumped whenever a primitive is added or its behaviour changes. scaffold.py
 # compares it with the repo's vendored copy and refreshes an older one.
 # Primitives are only ever added, so a refresh never breaks an older plan.
-VERSION = 2
+VERSION = 3
 
 # The Windows console code page (cp1252) cannot print every character a
 # gate emits; an unencodable one would crash summarize() mid-report.
@@ -446,6 +446,123 @@ class _Verifier:
         ok = not hits
         detail = "" if ok else "\n        ".join(hits)
         return self._record(f"plan filled: {plan_path}", ok, detail)
+
+    _CHECK_RX = re.compile(r"^- (C\d+\.\d+)\b.*?Proof:\s*(.+)$", re.MULTILINE)
+
+    def assert_distinct_proofs(self, plan_path: str) -> bool:
+        """No two checks share a proof command.
+
+        A command that settles several claims settles none of them alone: a
+        whole test file, a whole suite, or one verify script named for many
+        checks. Commands are compared by the span from the first to the last
+        backtick, so a proof whose regex itself holds backticks stays whole.
+        """
+        name = f"one proof per check: {plan_path}"
+        p = _resolve(plan_path)
+        if not p.is_file():
+            return self._record(name, False, f"missing: {p}")
+        text = p.read_text(encoding="utf-8", errors="replace")
+        owners: dict[str, list[str]] = {}
+        for m in self._CHECK_RX.finditer(text):
+            check, proof = m.group(1), m.group(2)
+            if "<FILL" in proof:
+                continue
+            first, last = proof.find("`"), proof.rfind("`")
+            span = proof[first + 1:last] if last > first else proof
+            key = " ".join(span.split())
+            owners.setdefault(key, []).append(check)
+        shared = [
+            f"{', '.join(checks)} share `{cmd[:100]}`"
+            for cmd, checks in owners.items()
+            if len(checks) > 1
+        ]
+        return self._record(name, not shared, "\n        ".join(shared))
+
+    # Anchored at line start: each hand-off quotes its own markers mid-line.
+    _STAGE_BLOCK_RX = re.compile(
+        r"^<!-- BEGIN STAGE (\d+) -->(.*?)^<!-- END STAGE \1 -->",
+        re.DOTALL | re.MULTILINE,
+    )
+    _DEPENDS_RX = re.compile(r"^\*\*Depends on:\*\*(.*)$", re.MULTILINE)
+    _FILE_ITEM_RX = re.compile(r"^- `([^`]+)`")
+
+    def assert_stage_graph(self, plan_path: str) -> bool:
+        """Stage `Depends on:` lines form a sound graph over the `Files:` lists.
+
+        Every dependency points to an existing earlier stage, so plan order is
+        a valid topological order and no cycle can exist. Two stages that
+        declare the same file must be ordered by a dependency path: the later
+        one builds on what the earlier one wrote. On green, prints the waves
+        (stages whose dependencies are all in earlier waves) and the widest.
+        """
+        name = f"stage graph: {plan_path}"
+        p = _resolve(plan_path)
+        if not p.is_file():
+            return self._record(name, False, f"missing: {p}")
+        text = p.read_text(encoding="utf-8", errors="replace")
+        stages: dict[int, tuple[set[int], set[str]]] = {}
+        problems: list[str] = []
+        for m in self._STAGE_BLOCK_RX.finditer(text):
+            n, body = int(m.group(1)), m.group(2)
+            dep_m = self._DEPENDS_RX.search(body)
+            raw = dep_m.group(1).strip() if dep_m else ""
+            if "<FILL" in raw:
+                problems.append(f"Stage {n}: `Depends on:` is unfilled")
+                stages[n] = (set(), set())
+                continue
+            deps = {int(d) for d in re.findall(r"Stage\s+(\d+)", raw)}
+            if not deps and raw.lower() != "none":
+                problems.append(f"Stage {n}: `Depends on:` is neither stage refs nor `none`: {raw!r}")
+            for d in sorted(deps):
+                if d >= n:
+                    problems.append(f"Stage {n}: depends on Stage {d}, which is not earlier")
+            files: set[str] = set()
+            in_files = False
+            for line in body.splitlines():
+                if line.startswith("**Files:**"):
+                    in_files = True
+                    continue
+                if in_files:
+                    fm = self._FILE_ITEM_RX.match(line)
+                    if fm:
+                        files.add(fm.group(1).strip())
+                    elif line.strip():
+                        break
+            stages[n] = (deps, files)
+        if not stages:
+            return self._record(name, False, "no `<!-- BEGIN STAGE n -->` blocks found")
+        for n, (deps, _) in stages.items():
+            for d in sorted(deps):
+                if d < n and d not in stages:
+                    problems.append(f"Stage {n}: depends on Stage {d}, which does not exist")
+        if problems:
+            return self._record(name, False, "\n        ".join(problems))
+
+        # Plan order is topological, so one forward pass closes ancestry.
+        ancestors: dict[int, set[int]] = {}
+        wave: dict[int, int] = {}
+        for n in sorted(stages):
+            deps = stages[n][0]
+            ancestors[n] = set(deps).union(*(ancestors[d] for d in deps))
+            wave[n] = 1 + max((wave[d] for d in deps), default=0)
+        ordered = sorted(stages)
+        for i, a in enumerate(ordered):
+            for b in ordered[i + 1:]:
+                for f in sorted(stages[a][1] & stages[b][1]):
+                    if a not in ancestors[b]:
+                        problems.append(
+                            f"`{f}` is in Stage {a} and Stage {b}, but Stage {b} does not depend on Stage {a}"
+                        )
+        ok = not problems
+        result = self._record(name, ok, "\n        ".join(problems))
+        if ok:
+            waves: dict[int, list[int]] = {}
+            for n in ordered:
+                waves.setdefault(wave[n], []).append(n)
+            for w in sorted(waves):
+                print(f"        wave {w}: " + ", ".join(f"Stage {n}" for n in waves[w]))
+            print(f"        widest wave: {max(len(v) for v in waves.values())}")
+        return result
 
     # ---------------------------------------------------------------- summary
 

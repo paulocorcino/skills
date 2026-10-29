@@ -14,6 +14,10 @@ A fresh context is not independence on its own: whoever writes the reviewer's br
 
 A retry that only sees the failure excerpt tends to walk back into the approach that just failed. The discarded approaches exist nowhere else — not in the code, not in the plan — so the red subagent returns them and the parent passes them into the retry.
 
+## Why a shared file implies a dependency
+
+A stage that edits a file another stage also edits reads what that stage wrote, whatever `Depends on:` claims. An undeclared edge makes the red-stage message lie: it offers the user a stage to run that sits on top of the broken one. `assert_stage_graph` rejects the pair, and the waves it prints show how much of the plan could run side by side — the measure for whether parallel execution would pay.
+
 ## Why one-way doors are recorded before the code
 
 An alternative is only knowable while you are still choosing between them. Written after the code, the rejected option becomes a justification of what was already built. Writing the literal shape and the rejected alternative first is also the one check that can expose a bad decision with nobody else in the loop.

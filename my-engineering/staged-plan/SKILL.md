@@ -47,7 +47,7 @@ A track that fits one session runs inline; a track whose subtask shape is only k
 - **Size by reading, not by minutes:** `wc -c` / 4 over the files the stage reads, written on its `**Size:**` line. Keep a stage under ~60k tokens of reading so the rest of the window absorbs iteration (test output, fixes, retries); above ~100k, split. Cut where the code surface changes — the next stage reads different code anyway, so nothing is read twice.
 - **Too small to stage:** when the stages' summed `Size` stays under ~30k tokens, the whole track fits one session and staging adds only overhead. The approval summary then leads with that recommendation — `cancel`, and do the work directly without a staged plan — and offers the staged plan as the alternative. A non-interactive caller already asked for a plan: scaffold anyway and say so in the final message.
 - **Order by blast radius:** internal/pure-refactor first, public API/UI last, externally-blocked work isolated in a trailing stage. **Risk first overrides it:** an unproven assumption (feasibility, library behaviour, performance) gets a spike stage at the front, so a failure surfaces before later stages invest in it.
-- **`Depends on:`** defaults to the previous stage; set it to the real prerequisites when a stage needs fewer. Execution stays sequential — the parent uses it only to tell the user which remaining stages a red stage does not block.
+- **`Depends on:`** names the earlier stages this stage builds on: it reads or edits what they wrote, or must keep one of their checks green. A file two stages share makes the later depend on the earlier. `none` when it builds only on the landing commit. Execution stays sequential — the parent uses it to tell the user which remaining stages a red stage does not block.
 - **Scope by file list:** each stage declares its files explicitly; the subagent STOPs and reports when the work needs a file outside the list. This replaces numeric budgets, which no subagent can observe at runtime.
 - **Tier and Effort** per stage, with a mandatory 1-2 line `Tier rationale:` naming the decision or risk that justifies it. The scaffold seeds `standard / standard`:
 
@@ -71,7 +71,7 @@ Every stage carries a `**Checks:**` list — the stage's acceptance bar, fixed f
 
 - **One claim per check** — a claim that needs "and" is two checks.
 - **A concrete value** — a status code, a field, a bound; never "gracefully", "properly", or "fast".
-- **The proof names a specific test or command**, never a whole suite: a green suite settles no single claim.
+- **The proof names a specific test or command**, never a whole suite: a green suite settles no single claim. Each check owns its proof — two checks sharing one command means that command settles neither; the pre-execution gate rejects the pair.
 - **The proof reaches the claim's level:** a claim about a status code or response shape needs a proof that crosses that boundary; a claim over N cases needs a proof over all N (one table-driven test may stand for the set, with its size stated).
 - **Refuse rather than guess:** a claim with no nameable proof is too vague to write. Resolve it from the source or the code; when it stays vague, it becomes the single question of the approval gate.
 
@@ -144,7 +144,7 @@ Flags: `--mode autonomous|semi-autonomous` · `--working-tree clean-required|sta
 
 Fill rules:
 
-1. Replace every `<FILL: ...>`; fill or delete every `<FILL-OR-DELETE: ...>` block (you decide, not the user). The pre-execution gate (`assert_no_placeholders`) refuses to launch Stage 1 while any survives.
+1. Replace every `<FILL: ...>`; fill or delete every `<FILL-OR-DELETE: ...>` block (you decide, not the user). The pre-execution gate (`assert_no_placeholders`, `assert_stage_graph` over the `Depends on:` and `Files:` lines, `assert_distinct_proofs` over the checks) refuses to launch Stage 1 while any survives or the graph is unsound; run its command from the plan's `## Execution model` before the landing commit.
 2. Use the per-stage HTML anchors (`<!-- STAGE 3: checks -->`) plus the FILL line as the match target of each edit — unique matches without large context, even across 6+ identical stage blocks.
 3. `<repo>` is already substituted with the absolute repo root. A literal `<repo>` survives only under `--allow-outside-repo`; substitute it by hand before the landing commit.
 
@@ -160,7 +160,7 @@ Plan file: [<plan-slug>.md](/absolute/path/to/docs/plans/<plan-slug>.md#L1)
 
 ## Phase 1.5 — Plan landing commit
 
-After approval, the **planner** (not a subagent) makes one commit landing the plan, `_verify.py` and `_report-template.md` (both written by the scaffold), any verify scripts, and the `.gitignore` rule. The procedure — including the `.gitignore` pre-check — is rendered into the plan's `## Plan landing commit` section; follow it there. Afterwards the working tree is clean and Phase 2 can start.
+The gate's approval — or a non-interactive run — is the user's request for this commit: it is part of the skill's output, so make it without asking again. The **planner** (not a subagent) makes one commit landing the plan, `_verify.py` and `_report-template.md` (both written by the scaffold), any verify scripts, and the `.gitignore` rule. The procedure — including the `.gitignore` pre-check — is rendered into the plan's `## Plan landing commit` section; follow it there. Afterwards the working tree is clean and Phase 2 can start.
 
 ## Phase 2 — Execution
 
