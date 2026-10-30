@@ -138,7 +138,9 @@ approved; a track that looks small still runs this way.
      `## Execution policy`. Check both before reporting a stage as running.
      A parent that ends its turn to wait keeps a wake-up armed — a background
      command that ends after the window (`sleep 1200`, or the executor's
-     timer), re-armed at each wake — so a silent stage still wakes it.
+     timer), re-armed at each wake — so a silent stage still wakes it. Once no
+     stage is in flight, stop the wake-up: left running, it holds the session
+     open until the window ends.
      Past the window with no return, the stage is stalled: log `stalled` with
      its tree's new commits and `git diff --stat`, stop the subagent if the
      executor can, and treat the stage as red. Its uncommitted edits go with
@@ -156,7 +158,7 @@ approved; a track that looks small still runs this way.
    `retry` at each relaunch, `halted` when execution stops for a human). A red stage holds only
    the stages that descend from it through `Depends on:`; the others keep
    launching.
-6. After the final stage, run `## End-to-end verification`, run the
+6. After the final stage, stop any wake-up still armed, run `## End-to-end verification`, run the
    `## Reviewer gate` if not `none`, and fill `## End-to-end summary` (the
    `Commit SHA` column is the integrated SHA). Commit the filled plan and the
    reviewer output together as the closing commit
