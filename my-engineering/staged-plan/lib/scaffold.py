@@ -1191,7 +1191,7 @@ def main() -> int:
         except OSError:
             pass
         raise
-    print(f"Plan scaffolded: {out.resolve()}")
+    print(f"Plan scaffolded: {out.resolve().as_posix()}")
 
     print(vendor_verify(out.parent))
 

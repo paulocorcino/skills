@@ -174,11 +174,15 @@ The gate's approval — or a delegated run — is the request for this commit: i
 
 ### End of Phase 1.5
 
-Close your final message with the block a calling agent reads to start execution, after running the plan's pre-execution gate (`## Execution model` step 0) once more on the landed plan:
+After running the plan's pre-execution gate (`## Execution model` step 0) once more on the landed plan, close your final message with the prompt that runs it — the one line a person copies into a fresh session — and then the block a calling agent reads. Both carry the entry plan's **absolute** path (the program, when there are phases), with forward slashes, exactly as `scaffold.py` printed it after `Plan scaffolded:`:
 
 ```
+Run it with:
+Execute the staged plan at <absolute path to the entry plan> as its parent, exactly as its ## Execution model says.
+
 <<PLAN_READY>>
 plan: <absolute path to the entry plan — the program, when there are phases>
+run-prompt: Execute the staged plan at <absolute path to the entry plan> as its parent, exactly as its ## Execution model says.
 landing-commit: <sha>
 gate: pass | fail (<the failing check>)
 widest-wave: <N, from assert_stage_graph>
@@ -186,6 +190,8 @@ decisions-without-gate: <one line each, or none>
 next: run the plan's ## Execution model as the parent
 <<END>>
 ```
+
+With `gate: fail`, leave the prompt out: the plan is not ready to run.
 
 `next:` stays exactly as shown — sizing advice belongs in the plan's `## Context`, where the caller weighs it before approving, not in the hand-back. A caller that forbade the commit gets `landing-commit: none (caller forbade it)` and lands the plan itself before Stage 1. A `gate: fail` block tells the caller not to execute; fix the plan and land it again before returning when you can.
 
