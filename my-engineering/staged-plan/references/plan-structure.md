@@ -2,6 +2,18 @@
 
 `lib/scaffold.py` is the single source of the plan skeleton — every boilerplate section and the exact wording subagents read. To see it, scaffold into a scratch repo. This file covers only what the planner writes into each `<FILL>`.
 
+## Program (an entry plan over phase plans)
+
+Rendered by `scaffold.py --program`. The planner fills two things:
+- `## Context`: why the work is phased, what each phase delivers, and the merge order of the pull requests a human
+  opens afterwards.
+- `## Phases`: one row per phase plan — ``| A | `<slug>-a.md` | #815, #808 | none |`` — its backlog ids and the
+  earlier phases it builds on. A phase depends on another when it starts from that phase's branch tip or needs a
+  file it changes; phases on separate branches whose shared files meet only at merge do not.
+
+Each phase plan is an ordinary staged plan and is filled as the rest of this file describes. Its `## Context`
+names the phases it builds on and the files it shares with phases that run beside it.
+
 ## Context
 
 Why this track exists, the constraints, what is in scope, and what is out of scope or blocked externally. A reader opening the plan cold learns *why* here and *what* in the stage blocks.

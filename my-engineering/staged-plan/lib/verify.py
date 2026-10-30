@@ -49,7 +49,7 @@ from pathlib import Path
 # Bumped whenever a primitive is added or its behaviour changes. scaffold.py
 # compares it with the repo's vendored copy and refreshes an older one.
 # Primitives are only ever added, so a refresh never breaks an older plan.
-VERSION = 5
+VERSION = 6
 
 # The Windows console code page (cp1252) cannot print every character a
 # gate emits; an unencodable one would crash summarize() mid-report.
@@ -687,13 +687,13 @@ class _Verifier:
             return self._record(name, False, "no `<!-- BEGIN STAGE n -->` blocks found")
         if len(blocks) > self.PLAN_STAGES_WARN:
             warnings.append(
-                f"{len(blocks)} stages, past {self.PLAN_STAGES_WARN}: one parent holds the whole run; "
-                "consider one plan per backlog item"
+                f"{len(blocks)} stages, past {self.PLAN_STAGES_WARN}: "
+                "consider phase plans under one program entry plan"
             )
         if len(items) > self.PLAN_ITEMS_WARN:
             warnings.append(
                 f"{len(items)} backlog items ({', '.join(sorted(items))}), past {self.PLAN_ITEMS_WARN}: "
-                "consider one plan per item"
+                "consider phase plans under one program entry plan"
             )
         for w in warnings:
             print(f"[WARN] {w}")
@@ -867,6 +867,67 @@ class _Verifier:
         print(line)
         return self._record(name, not problems, "\n        ".join(problems))
 
+    # ------------------------------------------------------------ program
+
+    _PHASES_RX = re.compile(r"^## Phases\s*$", re.MULTILINE)
+    _PHASE_ROW_RX = re.compile(r"^\|\s*([A-Za-z0-9_-]+)\s*\|\s*`([^`]+)`\s*\|([^|]*)\|([^|]*)\|\s*$")
+
+    def is_program(self, plan_path: str) -> bool:
+        """A program is an entry plan whose work lives in phase plans (`## Phases`)."""
+        text = _resolve(plan_path).read_text(encoding="utf-8", errors="replace")
+        return bool(self._PHASES_RX.search(text))
+
+    def phases(self, plan_path: str) -> list[tuple[str, Path, str, list[str]]]:
+        """The `## Phases` rows: (id, phase plan path, items, the phase ids it depends on).
+
+        A phase plan's path is read relative to the program file's folder.
+        """
+        p = _resolve(plan_path)
+        text = p.read_text(encoding="utf-8", errors="replace")
+        m = self._PHASES_RX.search(text)
+        if not m:
+            return []
+        body = text[m.end():]
+        end = re.search(r"^## ", body, re.MULTILINE)
+        rows = []
+        for line in (body[: end.start()] if end else body).splitlines():
+            rm = self._PHASE_ROW_RX.match(line)
+            if rm:
+                raw = rm.group(4).strip()
+                deps = [] if raw.lower() in ("none", "") else [d.strip() for d in raw.split(",")]
+                rows.append((rm.group(1), p.parent / rm.group(2), rm.group(3).strip(), deps))
+        return rows
+
+    def assert_program(self, plan_path: str) -> bool:
+        """`## Phases` names existing phase plans and a sound phase graph.
+
+        Every phase plan exists; ids are unique; each dependency names an
+        earlier phase, so table order is a valid order. Prints the phase waves.
+        """
+        name = f"program phases: {plan_path}"
+        rows = self.phases(plan_path)
+        if not rows:
+            return self._record(name, False, "no `| <id> | `<plan>.md` | <items> | <depends on> |` rows under `## Phases`")
+        problems: list[str] = []
+        seen: dict[str, int] = {}
+        wave: dict[str, int] = {}
+        for pid, path, _items, deps in rows:
+            if pid in seen:
+                problems.append(f"phase {pid}: listed twice")
+            if not path.is_file():
+                problems.append(f"phase {pid}: no plan at {path}")
+            for d in deps:
+                if d not in seen:
+                    problems.append(f"phase {pid}: depends on `{d}`, which is not an earlier phase")
+            seen[pid] = len(seen)
+            wave[pid] = 1 + max((wave.get(d, 0) for d in deps), default=0)
+        ok = not problems
+        result = self._record(name, ok, "\n        ".join(problems))
+        if ok:
+            for w in sorted(set(wave.values())):
+                print(f"        phase wave {w}: " + ", ".join(pid for pid in wave if wave[pid] == w))
+        return result
+
     LINE_LIMIT = 160
 
     def assert_line_width(self, plan_path: str) -> bool:
@@ -928,7 +989,8 @@ class _Verifier:
         """
         path = _logs_dir() / f"{Path(plan_path).stem}-run.md"
         ts = datetime.now().astimezone().isoformat(timespec="seconds")
-        who = "plan" if str(stage) in ("", "-") else f"Stage {stage}"
+        s = str(stage)
+        who = "plan" if s in ("", "-") else (f"Stage {s}" if s.isdigit() else f"Phase {s}")
         line = f"- {ts} | {who} | {event}" + (f" | {detail}" if detail else "")
         with path.open("a", encoding="utf-8", newline="\n") as fh:
             fh.write(line + "\n")
@@ -971,21 +1033,33 @@ def _main(argv: list[str]) -> int:
     h.add_argument("--workdir", help="worktree of an isolated stage")
     r = sub.add_parser("run-log", help="append one event to the plan's run log")
     r.add_argument("plan")
-    r.add_argument("stage", help="stage number, or - for a plan-wide event")
-    r.add_argument("event", help="launched | returned | integrated | red | stalled | retry | halted")
+    r.add_argument("stage", help="stage number, a phase id in a program, or - for a plan-wide event")
+    r.add_argument("event", help="launched | returned | integrated | red | stalled | retry | halted; phase-started | phase-closed")
     r.add_argument("detail", nargs="?", default="")
     args = ap.parse_args(argv)
 
     if args.cmd == "gate":
-        V.assert_no_placeholders(args.plan)
-        V.assert_stage_graph(args.plan)
-        V.assert_distinct_proofs(args.plan)
-        V.assert_plan_size(args.plan)
-        V.assert_read_budget(args.plan)
-        V.assert_line_width(args.plan)
+        plans = [args.plan]
+        if V.is_program(args.plan):
+            # The entry plan itself, then every phase plan's own gate.
+            V.assert_no_placeholders(args.plan)
+            V.assert_program(args.plan)
+            V.assert_line_width(args.plan)
+            k = V._tokens_k(_resolve(args.plan).read_text(encoding="utf-8", errors="replace"))
+            V._record(f"program fits one read (~{k:.1f}k tokens): {args.plan}", k <= V.READ_LIMIT_K)
+            plans = [str(path) for _pid, path, _i, _d in V.phases(args.plan) if path.is_file()]
+        for plan in plans:
+            V.assert_no_placeholders(plan)
+            V.assert_stage_graph(plan)
+            V.assert_distinct_proofs(plan)
+            V.assert_plan_size(plan)
+            V.assert_read_budget(plan)
+            V.assert_line_width(plan)
         code = V.summarize()
-        print()
-        V.print_stage_index(args.plan)
+        for plan in plans:
+            print()
+            print(f"{Path(plan).name}:")
+            V.print_stage_index(plan)
         return code
     if args.cmd == "brief":
         try:

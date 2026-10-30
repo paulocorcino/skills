@@ -46,6 +46,10 @@ So the plan is split by reader, not by section. The parent's part — everything
 
 The prompt itself is the same text for every stage but three fields. Stored once per stage, it was a third of that plan (95 KB of 284); one template plus a renderer in the vendored `_verify.py` keeps it single and lets the plan run without the skill.
 
+## Why one entry plan
+
+The caller asks for one thing: run this plan. A split that hands the caller three plans and an order to run them in moves the plan's own orchestration onto the caller. The reasons a large track splits are real — a parent's part that must fit one read, one pull request per backlog item — but they are the plan's to handle. So a large track becomes a program: one entry plan over phase plans, run by one parent. A long run in one parent was what the run log was built for: after a compaction or a crash the parent rebuilds what is in flight from the program's run log and each phase's, not from its memory. Phases ready together share one frontier, so splitting by phase costs no parallelism.
+
 ## Why the parent keeps a run log
 
 The conversation that drives a run is not durable: a compaction replaces it with a summary, a crash ends it. What is in flight — tree, branch, the executor's handle for each subagent, the last integrated SHA — has to survive both, so it lives in `logs/<slug>-run.md`, and the parent reads that file, not its memory of the run, before acting after any break.

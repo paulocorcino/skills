@@ -909,6 +909,68 @@ defeats the cost-savings purpose. -->
     return rendered
 
 
+PROGRAM_EXECUTION_MODEL = """## Execution model (READ FIRST)
+This plan is a program: one entry point over phase plans. Each phase plan is a staged plan of
+its own, with its stages, gate, briefs and run log. One parent runs the whole program from this
+file; whoever called it runs nothing else.
+
+0. **Program gate** (mandatory, before any phase starts). Run:
+   ```
+   python3 -B docs/plans/_verify.py gate docs/plans/{slug}.md
+   ```
+   (Use `python` where `python3` is absent.) It checks this file, the phase graph, and every
+   phase plan's own gate, then prints each phase's stage index. Non-zero: abort and surface it.
+1. **Read** this file in one read. A phase plan is read down to its `## Stages` when its phase
+   starts, as its own `## Execution model` step 1 says.
+   **Program run log:** `docs/plans/logs/{slug}-run.md`. Append one line per phase event:
+   ```
+   python3 -B docs/plans/_verify.py run-log docs/plans/{slug}.md <phase id> <event> "<detail>"
+   ```
+   Events: `phase-started`, `phase-closed` (with its closing commit or summary), `halted`.
+   After a compaction, a resume, or any doubt: read this run log, then the run log of each
+   started phase, before the next action.
+2. **Phase frontier.** A phase is *ready* when every phase its `Depends on:` names is closed.
+   Start ready phases in table order: log `phase-started`, then run that phase plan's own
+   `## Execution model` as its parent, from this same session.
+   Phases ready together run side by side: their ready stages form one frontier, never more
+   in flight than `Concurrency` below, and each stage is launched, integrated and verified as
+   its own phase plan says, in its own phase's tree.
+3. **Phase close.** A phase is closed when its plan's last step is done (end-to-end
+   verification, reviewer gate, summary). Log `phase-closed`, then recompute the ready phases.
+   A closed phase lives on in git, its run log and its summary; its plan is not read again.
+4. **Red.** A phase that halts for a human holds only the phases that depend on it; the others
+   go on. Once nothing can run, stop with the halted phase's own message and notification.
+5. **After the last phase**, fill `## Program summary` and list what is left for a human (the
+   pull requests to open, and their merge order from `## Context`).
+"""
+
+
+def render_program(args: argparse.Namespace) -> str:
+    rows = "\n".join(
+        f"| {pid} | `{plan}` | <FILL: backlog ids> | <FILL: earlier phase ids, or none> |"
+        for pid, plan in args.phase_rows
+    )
+    summary = "\n".join(f"| {pid} | `{plan}` | | |" for pid, plan in args.phase_rows)
+    rendered = "\n".join([
+        f"# {args.title} - Staged Program\n",
+        f"<!-- scaffolded {date.today().isoformat()} via staged-plan/lib/scaffold.py --program -->\n",
+        PROGRAM_EXECUTION_MODEL.replace("{slug}", args.slug),
+        "## Execution policy\n"
+        f"- Concurrency: {args.concurrency} — stages in flight across every phase that runs; each phase\n"
+        "  plan's own policy governs its stages (retries, stall window, working tree, reviewer).\n",
+        "## Context\n<FILL: why this work is split into phases, what each phase delivers, and the merge order\n"
+        "of the pull requests a human opens.>\n",
+        "## Phases\n| Phase | Plan | Items | Depends on |\n|---|---|---|---|\n" + rows + "\n",
+        "## Program summary (parent fills after the last phase)\n"
+        "| Phase | Plan | Closing commit | Status |\n|---|---|---|---|\n" + summary + "\n",
+    ])
+    # The same plan-dir rewrite `scaffold` applies (see there).
+    plan_dir_rel = getattr(args, "plan_dir_rel", None)
+    if plan_dir_rel and plan_dir_rel != "docs/plans":
+        rendered = rendered.replace("docs/plans", plan_dir_rel)
+    return rendered
+
+
 def render_summary(args: argparse.Namespace, out: Path) -> str:
     """The <<PRE_SCAFFOLD_SUMMARY>> block for non-interactive callers.
 
@@ -916,7 +978,8 @@ def render_summary(args: argparse.Namespace, out: Path) -> str:
     planner remembers to emit it; the planner repeats it in its final message,
     the only text `claude -p` writes to stdout.
     """
-    stages = "\n".join(f"  - {title}" for title in args.stage)
+    stages = "\n".join(f"  - {title}" for title in args.stage) or "\n".join(
+        f"  - phase {pid}: {plan}" for pid, plan in getattr(args, "phase_rows", []))
     reason = args.reviewer_reason.strip() or "—"
     return (
         "<<PRE_SCAFFOLD_SUMMARY>>\n"
@@ -972,7 +1035,10 @@ def main() -> int:
     p = argparse.ArgumentParser(description="Scaffold a staged-plan markdown.")
     p.add_argument("--slug", required=True, help="plan slug (e.g. migration-x)")
     p.add_argument("--title", required=True, help="plan title (e.g. 'Migrate module Y from A to B')")
-    p.add_argument("--stage", action="append", required=True, help="stage title (repeat for each stage)")
+    p.add_argument("--stage", action="append", default=[], help="stage title (repeat for each stage)")
+    p.add_argument("--program", action="store_true", help="scaffold a program entry plan over phase plans")
+    p.add_argument("--phase", action="append", default=[], metavar="ID=PLAN.md",
+                   help="with --program: a phase id and its phase plan file, beside the entry plan (repeat)")
     p.add_argument("--output", required=True, help="output path (e.g. docs/plans/migration-x.md). Aborts if file exists unless --force.")
     p.add_argument("--mode", default="autonomous", choices=["autonomous", "semi-autonomous"])
     p.add_argument(
@@ -1020,7 +1086,12 @@ def main() -> int:
     )
     args = p.parse_args()
 
-    if len(args.stage) < 1:
+    if args.program:
+        args.phase_rows = [tuple(s.split("=", 1)) for s in args.phase]
+        if not args.phase_rows or any(len(r) != 2 or not all(r) for r in args.phase_rows):
+            print("error: --program needs one or more --phase ID=PLAN.md", file=sys.stderr)
+            return 2
+    elif len(args.stage) < 1:
         print("error: at least one --stage required", file=sys.stderr)
         return 2
 
@@ -1112,7 +1183,7 @@ def main() -> int:
     )
     try:
         with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as fh:
-            fh.write(scaffold(args))
+            fh.write(render_program(args) if args.program else scaffold(args))
         os.replace(tmp_name, out)
     except Exception:
         try:

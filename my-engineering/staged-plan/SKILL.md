@@ -47,7 +47,7 @@ A track that fits one session runs inline; a track whose subtask shape is only k
 
 - **One observable outcome per stage**, 1-3 backlog items. Every stage commit is green, revertable on its own, and shippable: incomplete user-visible behaviour sits behind a flag or stays unwired. An outcome is never split across stages — the next stage would inherit half of it.
 - **Size by reading, not by minutes:** `wc -c` / 2.5 over the files the stage reads, written on its `**Size:**` line — source and markdown both measure ~2.5 bytes per token, so `/ 4` undercounts by ~1.6×. Keep a stage under ~60k tokens of reading so the rest of the window absorbs iteration (test output, fixes, retries); above ~100k, split — the pre-execution gate fails such a stage. Cut where the code surface changes — the next stage reads different code anyway, so nothing is read twice.
-- **One parent per plan:** one parent context holds the whole run, through every launch, return, and integration. Past ~12 stages or ~3 backlog items, write one plan per item, each run by its own parent; a plan that builds on another names it in `## Context` and starts once that plan is closed. The gate warns on both counts.
+- **One entry plan:** the caller always runs one plan, `<plan-slug>.md`, and one parent runs all of it; how the work splits is the plan's concern, never the caller's. Past ~12 stages or ~3 backlog items (the gate warns on both), or when one file's parent part would not fit one read, split the work into **phase plans** — each an ordinary staged plan, `<plan-slug>-<phase>.md`, typically one per pull request — under a **program** entry plan that lists them in `## Phases` with their `Depends on:`. Phases ready together share one frontier, so independent phases still run side by side.
 - **Shared procedure:** steps that two or more stages repeat — the same refactor recipe over different files, the same fix over different sites — go once under `## Procedures`; each stage names the recipe and the input it runs on, and keeps only its own steps.
 - **Too small to stage:** when the stages' summed `Size` stays under ~30k tokens, the whole track fits one session and staging adds only overhead. The approval summary then leads with that recommendation — `cancel`, and do the work directly without a staged plan — and offers the staged plan as the alternative. A non-interactive caller already asked for a plan: scaffold anyway and say so in the final message.
 - **Order by blast radius:** internal/pure-refactor first, public API/UI last, externally-blocked work isolated in a trailing stage. **Risk first overrides it:** an unproven assumption (feasibility, library behaviour, performance) gets a spike stage at the front, so a failure surfaces before later stages invest in it.
@@ -149,6 +149,8 @@ python3 <skill-dir>/lib/scaffold.py \
 
 Flags: `--mode autonomous|semi-autonomous` · `--working-tree clean-required|stash-authorized|integrate-existing|abort-until-clean` · `--reviewer none|light|deep` (+ `--reviewer-reason`) · `--report-policy committed|gitignored` · `--concurrency N`. The script refuses to overwrite an existing file (exit 3) unless `--force` — run it once, then edit; a re-run destroys the fill.
 
+A program scaffolds each phase plan as above (`--slug <plan-slug>-<phase>`), then the entry plan last: `--program --slug <plan-slug> --phase A=<plan-slug>-a.md --phase B=<plan-slug>-b.md ... --output <repo>/docs/plans/<plan-slug>.md`. Fill its `## Context` (why the phases, the merge order a human follows) and each `## Phases` row's items and `Depends on:`; the program gate runs every phase plan's gate too.
+
 Fill rules:
 
 1. Replace every `<FILL: ...>`; fill or delete every `<FILL-OR-DELETE: ...>` block (you decide, not the user). The pre-execution gate (`python3 -B docs/plans/_verify.py gate <plan>`: placeholders, the stage graph over the `Depends on:` and `Files:` lines, one proof per check, stage sizes, one read each, line width) refuses to launch Stage 1 while any survives, the graph is unsound, a stage is past ~100k, the parent's part or a brief is past the ~25k tokens one read returns, or a line passes 160 characters; run it before the landing commit, and carry its `[WARN]` lines into the approval summary or the plan's `## Context`. A brief past budget usually means shared sections carrying detail only some stages use: move that detail into those stages' blocks.
@@ -176,7 +178,7 @@ Close your final message with the block a calling agent reads to start execution
 
 ```
 <<PLAN_READY>>
-plan: <absolute path to the plan file>
+plan: <absolute path to the entry plan — the program, when there are phases>
 landing-commit: <sha>
 gate: pass | fail (<the failing check>)
 widest-wave: <N, from assert_stage_graph>
