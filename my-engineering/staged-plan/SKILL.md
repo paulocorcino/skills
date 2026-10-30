@@ -46,7 +46,9 @@ A track that fits one session runs inline; a track whose subtask shape is only k
 ### 2. Decompose into stages
 
 - **One observable outcome per stage**, 1-3 backlog items. Every stage commit is green, revertable on its own, and shippable: incomplete user-visible behaviour sits behind a flag or stays unwired. An outcome is never split across stages — the next stage would inherit half of it.
-- **Size by reading, not by minutes:** `wc -c` / 4 over the files the stage reads, written on its `**Size:**` line. Keep a stage under ~60k tokens of reading so the rest of the window absorbs iteration (test output, fixes, retries); above ~100k, split. Cut where the code surface changes — the next stage reads different code anyway, so nothing is read twice.
+- **Size by reading, not by minutes:** `wc -c` / 2.5 over the files the stage reads, written on its `**Size:**` line — source and markdown both measure ~2.5 bytes per token, so `/ 4` undercounts by ~1.6×. Keep a stage under ~60k tokens of reading so the rest of the window absorbs iteration (test output, fixes, retries); above ~100k, split — the pre-execution gate fails such a stage. Cut where the code surface changes — the next stage reads different code anyway, so nothing is read twice.
+- **One parent per plan:** one parent context holds the whole run, through every launch, return, and integration. Past ~12 stages or ~3 backlog items, write one plan per item, each run by its own parent; a plan that builds on another names it in `## Context` and starts once that plan is closed. The gate warns on both counts.
+- **Shared procedure:** steps that two or more stages repeat — the same refactor recipe over different files, the same fix over different sites — go once under `## Procedures`; each stage names the recipe and the input it runs on, and keeps only its own steps.
 - **Too small to stage:** when the stages' summed `Size` stays under ~30k tokens, the whole track fits one session and staging adds only overhead. The approval summary then leads with that recommendation — `cancel`, and do the work directly without a staged plan — and offers the staged plan as the alternative. A non-interactive caller already asked for a plan: scaffold anyway and say so in the final message.
 - **Order by blast radius:** internal/pure-refactor first, public API/UI last, externally-blocked work isolated in a trailing stage. **Risk first overrides it:** an unproven assumption (feasibility, library behaviour, performance) gets a spike stage at the front, so a failure surfaces before later stages invest in it.
 - **`Depends on:`** names the earlier stages this stage builds on: it reads or edits what they wrote, or must keep one of their checks green. A file two stages share makes the later depend on the earlier. `none` when it builds only on the landing commit. The parent launches a stage once every stage it names is integrated green: an edge too many serializes the plan, an edge too few starts a stage on code that is not there yet.
@@ -126,7 +128,7 @@ Run `git rev-parse --show-toplevel` before invoking `scaffold.py`:
 
 ### 7. Scaffold, then fill
 
-The scaffold is the single source of the plan skeleton: it renders ~60% of the plan deterministically (Execution model, Execution policy, Plan landing commit, Executor adapter, Hand-off conventions, Stage 0, per-stage blocks and hand-offs, Reviewer gate, End-to-end summary). You write only the cognitive parts.
+The scaffold is the single source of the plan skeleton: it renders every deterministic section (Execution model, Execution policy, Plan landing commit, Executor adapter, Hand-off conventions, the one hand-off template, Stage 0, Reviewer gate, End-to-end summary, per-stage block skeletons). The plan is laid out by reader: everything the parent needs comes first and is read in one pass; the stage blocks come last, under `## Stages`, and reach each subagent inside its **brief** — one document the parent generates at launch with the prompt, the stage block, and the sections that stage works under. Text every stage shares lives once. You write only the cognitive parts.
 
 `<skill-dir>` is the directory holding this `SKILL.md` — wherever your agent loaded it from (user, project, or plugin install). Use `python` where `python3` is absent (common on Windows).
 
@@ -149,11 +151,12 @@ Flags: `--mode autonomous|semi-autonomous` · `--working-tree clean-required|sta
 
 Fill rules:
 
-1. Replace every `<FILL: ...>`; fill or delete every `<FILL-OR-DELETE: ...>` block (you decide, not the user). The pre-execution gate (`assert_no_placeholders`, `assert_stage_graph` over the `Depends on:` and `Files:` lines, `assert_distinct_proofs` over the checks) refuses to launch Stage 1 while any survives or the graph is unsound; run its command from the plan's `## Execution model` before the landing commit.
+1. Replace every `<FILL: ...>`; fill or delete every `<FILL-OR-DELETE: ...>` block (you decide, not the user). The pre-execution gate (`python3 -B docs/plans/_verify.py gate <plan>`: placeholders, the stage graph over the `Depends on:` and `Files:` lines, one proof per check, stage sizes, one read each, line width) refuses to launch Stage 1 while any survives, the graph is unsound, a stage is past ~100k, the parent's part or a brief is past the ~25k tokens one read returns, or a line passes 160 characters; run it before the landing commit, and carry its `[WARN]` lines into the approval summary or the plan's `## Context`. A brief past budget usually means shared sections carrying detail only some stages use: move that detail into those stages' blocks.
 2. Use the per-stage HTML anchors (`<!-- STAGE 3: checks -->`) plus the FILL line as the match target of each edit — unique matches without large context, even across 6+ identical stage blocks.
 3. `<repo>` is already substituted with the absolute repo root. A literal `<repo>` survives only under `--allow-outside-repo`; substitute it by hand before the landing commit.
+4. Keep every line within 160 characters: wrap prose and list items, continuing a list item two spaces in. A table whose rows run past 160 becomes a list, one item per row with its columns as labelled parts. A proof command past 160 moves into the stage's verify script.
 
-Section-by-section guidance, including the hand-off prompt: `references/plan-structure.md`. When to generate a verify script: `references/verify-scripts.md`. A filled example of the cognitive parts: `examples/migration-x.md`.
+Section-by-section guidance, including Procedures and the hand-off template: `references/plan-structure.md`. When to generate a verify script: `references/verify-scripts.md`. A filled example of the cognitive parts: `examples/migration-x.md`.
 
 ### End of Phase 1
 
@@ -186,12 +189,13 @@ next: run the plan's ## Execution model as the parent
 
 ## Phase 2 — Execution
 
-Phase 2 runs from the plan file alone: `## Execution model`, `## Execution policy`, and the per-stage hand-offs, all rendered by the scaffold. The design rationale behind them and the optional hardening (hooks, run log) live in `references/execution.md` — reach for it when changing the execution contract itself.
+Phase 2 runs from the plan file and its vendored `_verify.py` alone: `## Execution model`, `## Execution policy`, and the hand-off template, all rendered by the scaffold. The design rationale behind them — one read per reader, the run log, the stall window — and the optional hardening live in `references/execution.md`; reach for it when changing the execution contract itself.
 
 ## Invariants every plan holds
 
 - Each stage reaches its subagent fully formed: the subagent executes, the planner already planned.
-- Hand-off prompts stand alone — they point to the plan, git, and prior reports, never to a previous conversation.
+- Each reader's instructions fit one read: the parent's part of the plan, and each stage's brief.
+- Briefs stand alone — they point to git and prior reports, never to a previous conversation.
 - One stage per subagent, with no nested subagents: contextual isolation and the green-to-green audit are the point.
 - Hand-offs stage files by explicit path and tell the subagent to grep for symbols, since line numbers drift once Stage 1 lands.
 - The parent re-runs every proof itself; a subagent's report is a claim, not evidence.

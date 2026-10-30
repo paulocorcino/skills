@@ -21,6 +21,12 @@ Generated script pattern:
     V.assert_no_placeholders("docs/plans/<slug>.md")
     sys.exit(V.summarize())
 
+Run as a script, it serves the parent of a plan:
+
+    python3 -B docs/plans/_verify.py gate docs/plans/<slug>.md
+    python3 -B docs/plans/_verify.py brief docs/plans/<slug>.md 3 [--workdir <path>]
+    python3 -B docs/plans/_verify.py run-log docs/plans/<slug>.md 3 launched "<detail>"
+
 Design principles (review-driven):
 - Guardrails, not summaries: scripts validate contract and preserve evidence;
   agent owns judgment.
@@ -43,7 +49,7 @@ from pathlib import Path
 # Bumped whenever a primitive is added or its behaviour changes. scaffold.py
 # compares it with the repo's vendored copy and refreshes an older one.
 # Primitives are only ever added, so a refresh never breaks an older plan.
-VERSION = 4
+VERSION = 5
 
 # The Windows console code page (cp1252) cannot print every character a
 # gate emits; an unencodable one would crash summarize() mid-report.
@@ -622,6 +628,312 @@ class _Verifier:
             print(f"        widest wave: {max(len(v) for v in waves.values())}")
         return result
 
+    # ------------------------------------------------------------ plan shape
+
+    # Thousands of tokens of reading (`**Size:**`). Past the split bound,
+    # iteration (test output, fixes, retries) pushes a stage subagent toward a
+    # window it cannot finish in.
+    SIZE_TARGET_K = 60
+    SIZE_SPLIT_K = 100
+    # One parent holds the whole run; past these, the plan is several plans.
+    PLAN_STAGES_WARN = 12
+    PLAN_ITEMS_WARN = 3
+
+    _SIZE_RX = re.compile(r"^\*\*Size:\*\*(.*)$", re.MULTILINE)
+    _SIZE_K_RX = re.compile(r"~?\s*(\d+(?:\.\d+)?)\s*k\b")
+    _ITEMS_RX = re.compile(r"^\*\*Items:\*\*(.*)$", re.MULTILINE)
+    # Issue numbers and tracker keys; a decision record is not a backlog item.
+    _ITEM_ID_RX = re.compile(r"#\d+|\b(?!ADR-|RFC-)[A-Z][A-Z0-9]+-\d+\b")
+
+    def assert_plan_size(self, plan_path: str) -> bool:
+        """Each stage fits its subagent's window, and the plan fits one parent.
+
+        Fails when a stage's `**Size:**` names more than SIZE_SPLIT_K thousand
+        tokens, or no `~Nk` at all. Warns, without failing, when a stage passes
+        SIZE_TARGET_K, when the plan holds more than PLAN_STAGES_WARN stages,
+        or when its `**Items:**` lines name more than PLAN_ITEMS_WARN distinct
+        backlog ids — the shape of several plans sharing one parent.
+        """
+        name = f"plan size: {plan_path}"
+        p = _resolve(plan_path)
+        if not p.is_file():
+            return self._record(name, False, f"missing: {p}")
+        text = p.read_text(encoding="utf-8", errors="replace")
+        problems: list[str] = []
+        warnings: list[str] = []
+        items: set[str] = set()
+        blocks = list(self._STAGE_BLOCK_RX.finditer(text))
+        for m in blocks:
+            n, body = int(m.group(1)), m.group(2)
+            size_m = self._SIZE_RX.search(body)
+            raw = size_m.group(1).strip() if size_m else ""
+            k_m = self._SIZE_K_RX.search(raw)
+            if "<FILL" in raw:
+                continue  # assert_no_placeholders reports it
+            if not k_m:
+                problems.append(f"Stage {n}: `Size:` names no `~Nk tokens`: {raw!r}")
+            else:
+                k = float(k_m.group(1))
+                if k > self.SIZE_SPLIT_K:
+                    problems.append(
+                        f"Stage {n}: ~{k:g}k tokens of reading is past ~{self.SIZE_SPLIT_K}k: "
+                        "split it where the code surface changes"
+                    )
+                elif k > self.SIZE_TARGET_K:
+                    warnings.append(f"Stage {n}: ~{k:g}k tokens, past the ~{self.SIZE_TARGET_K}k target")
+            for im in self._ITEMS_RX.finditer(body):
+                items.update(self._ITEM_ID_RX.findall(im.group(1)))
+        if not blocks:
+            return self._record(name, False, "no `<!-- BEGIN STAGE n -->` blocks found")
+        if len(blocks) > self.PLAN_STAGES_WARN:
+            warnings.append(
+                f"{len(blocks)} stages, past {self.PLAN_STAGES_WARN}: one parent holds the whole run; "
+                "consider one plan per backlog item"
+            )
+        if len(items) > self.PLAN_ITEMS_WARN:
+            warnings.append(
+                f"{len(items)} backlog items ({', '.join(sorted(items))}), past {self.PLAN_ITEMS_WARN}: "
+                "consider one plan per item"
+            )
+        for w in warnings:
+            print(f"[WARN] {w}")
+        return self._record(name, not problems, "\n        ".join(problems))
+
+    # -------------------------------------------------------------- hand-off
+
+    _HANDOFF_TEMPLATE_RX = re.compile(
+        r"^<!-- BEGIN HANDOFF TEMPLATE -->\n```[a-z]*\n(.*?)\n```\n<!-- END HANDOFF TEMPLATE -->",
+        re.DOTALL | re.MULTILINE,
+    )
+    _STAGE_TITLE_RX = re.compile(r"^## Stage \d+ - (.+)$", re.MULTILINE)
+
+    def handoff(self, plan_path: str, n: int, workdir: str | None = None) -> str:
+        """The hand-off prompt of Stage `n`, rendered from the plan's template.
+
+        Fills `{{N}}`, `{{TITLE}}` and `{{ITEMS}}` from the stage block and,
+        for an isolated stage, appends the `Working directory:` line. Raises
+        ValueError when the plan has no template or no such stage.
+        """
+        p = _resolve(plan_path)
+        text = p.read_text(encoding="utf-8", errors="replace")
+        tm = self._HANDOFF_TEMPLATE_RX.search(text)
+        if not tm:
+            raise ValueError(f"{p.name}: no `<!-- BEGIN HANDOFF TEMPLATE -->` block")
+        block = next(
+            (m.group(2) for m in self._STAGE_BLOCK_RX.finditer(text) if int(m.group(1)) == n),
+            None,
+        )
+        if block is None:
+            raise ValueError(f"{p.name}: no Stage {n} block")
+        title_m = self._STAGE_TITLE_RX.search(block)
+        items_m = self._ITEMS_RX.search(block)
+        prompt = (
+            tm.group(1)
+            .replace("{{N}}", str(n))
+            .replace("{{TITLE}}", title_m.group(1).strip() if title_m else f"Stage {n}")
+            .replace("{{ITEMS}}", items_m.group(1).strip() if items_m else "none")
+        )
+        if workdir:
+            prompt += f"\n\nWorking directory: {workdir}"
+        return prompt
+
+    # ------------------------------------------------------------ one read
+
+    # Measured on 2026-10-30 with Claude Code's Read tool: one call returns at
+    # most 25,000 tokens, and Rust, TypeScript and plan markdown all ran at
+    # ~2.4-2.6 bytes per token. 2.5 keeps the estimate on the safe side.
+    BYTES_PER_TOKEN = 2.5
+    READ_LIMIT_K = 25
+    READ_TARGET_K = 20
+
+    # Sections of the plan a stage works under, in the order its brief shows
+    # them: rules first, reference last. The rest of the plan is the parent's.
+    BRIEF_SECTIONS = (
+        "Hand-off conventions",
+        "Global conventions",
+        "Procedures",
+        "One-way doors",
+        "Critical files",
+    )
+    _STAGES_RX = re.compile(r"^## Stages\s*$", re.MULTILINE)
+    _ANCHOR_LINE_RX = re.compile(r"^<!-- (?:BEGIN |END )?STAGE \d+(?::[^>]*)? -->\n?", re.MULTILINE)
+    _TIER_RX = re.compile(r"^\*\*Tier:\*\*\s*(\w+)", re.MULTILINE)
+    _EFFORT_RX = re.compile(r"^\*\*Effort:\*\*\s*(\w+)", re.MULTILINE)
+
+    def _tokens_k(self, text: str) -> float:
+        return len(text.encode("utf-8")) / self.BYTES_PER_TOKEN / 1000
+
+    def _head(self, text: str) -> str:
+        """The parent's part: everything above `## Stages` (or the first stage block)."""
+        m = self._STAGES_RX.search(text) or self._STAGE_BLOCK_RX.search(text)
+        return text[: m.start()] if m else text
+
+    def _section(self, head: str, name: str) -> str:
+        m = re.search(rf"^## {re.escape(name)}\b.*?(?=^## |\Z)", head, re.DOTALL | re.MULTILINE)
+        return m.group(0).rstrip() + "\n" if m else ""
+
+    def _named_recipes(self, section: str, block: str) -> str:
+        """The `### <name>` recipes of `## Procedures` that the stage block names.
+
+        A brief carries the recipes its stage runs, not the whole catalogue.
+        Empty when the stage names none.
+        """
+        heading, _, body = section.partition("\n")
+        recipes = re.split(r"(?m)^(?=### )", body)
+        kept = [r for r in recipes if r.startswith("### ") and r[4:].splitlines()[0].strip().strip("`") in block]
+        return heading + "\n" + "".join(kept).rstrip() + "\n" if kept else ""
+
+    def brief_text(self, plan_path: str, n: int, workdir: str | None = None) -> str:
+        """Stage `n`'s whole hand-off as one document.
+
+        The rendered prompt, then the stage block, then the plan sections the
+        stage works under (BRIEF_SECTIONS) — so the subagent reads one document
+        in one read and none of the parent's text. Raises ValueError like
+        `handoff`.
+        """
+        text = _resolve(plan_path).read_text(encoding="utf-8", errors="replace")
+        prompt = self.handoff(plan_path, n, workdir)
+        block = next(m.group(0) for m in self._STAGE_BLOCK_RX.finditer(text) if int(m.group(1)) == n)
+        # The anchors serve the planner's edits; the subagent reads past them.
+        block = re.sub(r"\n{3,}", "\n\n", self._ANCHOR_LINE_RX.sub("", block)).strip() + "\n"
+        head = self._head(text)
+        shared = []
+        for name in self.BRIEF_SECTIONS:
+            section = self._section(head, name)
+            if name == "Procedures" and section:
+                section = self._named_recipes(section, block)
+            if section:
+                shared.append(section)
+        title_m = self._STAGE_TITLE_RX.search(block)
+        title = title_m.group(1).strip() if title_m else f"Stage {n}"
+        parts = [f"# Brief: Stage {n} - {title}\n", prompt.strip() + "\n", "---\n", block, "---\n", *shared]
+        return "\n".join(parts)
+
+    def brief(self, plan_path: str, n: int, workdir: str | None = None) -> tuple[Path, float]:
+        """Write Stage `n`'s brief to `logs/<slug>-stage-<n>-brief.md`.
+
+        Returns the path and its size in thousands of tokens. One file per
+        launch: a retry gets `-brief-2.md`, `-brief-3.md`, ..., so each file
+        stays the record of what that attempt was handed.
+        """
+        text = self.brief_text(plan_path, n, workdir)
+        stem = f"{Path(plan_path).stem}-stage-{n}-brief"
+        path = _logs_dir() / f"{stem}.md"
+        attempt = 1
+        while path.exists():
+            attempt += 1
+            path = _logs_dir() / f"{stem}-{attempt}.md"
+        with path.open("w", encoding="utf-8", newline="\n") as fh:
+            fh.write(text)
+        return path, self._tokens_k(text)
+
+    def assert_read_budget(self, plan_path: str) -> bool:
+        """The parent's part and every stage's brief each fit one read.
+
+        Fails past READ_LIMIT_K thousand tokens — the most one read returns —
+        and warns past READ_TARGET_K. A plan without a hand-off template
+        (scaffolded before briefs existed) has only its parent's part checked.
+        """
+        name = f"one read each: {plan_path}"
+        p = _resolve(plan_path)
+        if not p.is_file():
+            return self._record(name, False, f"missing: {p}")
+        text = p.read_text(encoding="utf-8", errors="replace")
+        problems: list[str] = []
+        sizes = [(
+            "the parent's part (down to `## Stages`)",
+            self._tokens_k(self._head(text)),
+            "move stage-specific detail into stage blocks, or split the plan",
+        )]
+        if self._HANDOFF_TEMPLATE_RX.search(text):
+            for m in self._STAGE_BLOCK_RX.finditer(text):
+                n = int(m.group(1))
+                sizes.append((
+                    f"Stage {n}'s brief",
+                    self._tokens_k(self.brief_text(plan_path, n)),
+                    "move detail only some stages use out of the shared sections, or split the stage",
+                ))
+        else:
+            print("        no hand-off template: briefs not measured")
+        for what, k, fix in sizes:
+            if k > self.READ_LIMIT_K:
+                problems.append(f"{what}: ~{k:.1f}k tokens, past the ~{self.READ_LIMIT_K}k one read returns: {fix}")
+            elif k > self.READ_TARGET_K:
+                print(f"[WARN] {what}: ~{k:.1f}k tokens, past the ~{self.READ_TARGET_K}k target")
+        line = f"        parent's part ~{sizes[0][1]:.1f}k tokens"
+        if len(sizes) > 1:
+            what, k, _ = max(sizes[1:], key=lambda s: s[1])
+            line += f"; largest brief ~{k:.1f}k ({what})"
+        print(line)
+        return self._record(name, not problems, "\n        ".join(problems))
+
+    LINE_LIMIT = 160
+
+    def assert_line_width(self, plan_path: str) -> bool:
+        """No line of the plan is longer than LINE_LIMIT characters.
+
+        Every line, tables and fences included: a row too long to read at a
+        glance is a list item waiting to happen, and a proof command too long
+        for one line belongs in the stage's verify script.
+        """
+        name = f"lines within {self.LINE_LIMIT} characters: {plan_path}"
+        p = _resolve(plan_path)
+        if not p.is_file():
+            return self._record(name, False, f"missing: {p}")
+        lines = p.read_text(encoding="utf-8", errors="replace").splitlines()
+        long = [(i, len(line)) for i, line in enumerate(lines, start=1) if len(line) > self.LINE_LIMIT]
+        detail = "\n        ".join(f"{p.name}:{i}: {n} characters" for i, n in long[:10])
+        if len(long) > 10:
+            detail += f"\n        ... and {len(long) - 10} more"
+        return self._record(name, not long, detail)
+
+    def print_stage_index(self, plan_path: str) -> None:
+        """One line per stage: what the parent schedules from, without the blocks."""
+        text = _resolve(plan_path).read_text(encoding="utf-8", errors="replace")
+
+        def pick(rx: re.Pattern[str], body: str) -> str:
+            m = rx.search(body)
+            return m.group(1).strip() if m else "?"
+
+        print("stage index:")
+        for m in self._STAGE_BLOCK_RX.finditer(text):
+            n, body = int(m.group(1)), m.group(2)
+            files: list[str] = []
+            in_files = False
+            for line in body.splitlines():
+                if line.startswith("**Files:**"):
+                    in_files = True
+                    continue
+                if in_files:
+                    fm = self._FILE_ITEM_RX.match(line)
+                    if fm:
+                        files.append(fm.group(1).strip())
+                    elif line.strip():
+                        break
+            size = self._SIZE_K_RX.search(pick(self._SIZE_RX, body))
+            print(
+                f"  Stage {n} | {pick(self._STAGE_TITLE_RX, body)}"
+                f" | {pick(self._TIER_RX, body)}/{pick(self._EFFORT_RX, body)}"
+                f" | {('~' + size.group(1) + 'k') if size else '?'}"
+                f" | depends: {pick(self._DEPENDS_RX, body)} | files: {', '.join(files) or '-'}"
+            )
+
+    # --------------------------------------------------------------- run log
+
+    def record_run(self, plan_path: str, stage: str, event: str, detail: str = "") -> Path:
+        """Append one event to the plan's run log, `logs/<slug>-run.md`.
+
+        The run log is the parent's memory of what is in flight: it survives a
+        compaction or a crash of the conversation that drives the run.
+        """
+        path = _logs_dir() / f"{Path(plan_path).stem}-run.md"
+        ts = datetime.now().astimezone().isoformat(timespec="seconds")
+        who = "plan" if str(stage) in ("", "-") else f"Stage {stage}"
+        line = f"- {ts} | {who} | {event}" + (f" | {detail}" if detail else "")
+        with path.open("a", encoding="utf-8", newline="\n") as fh:
+            fh.write(line + "\n")
+        return path
+
     # ---------------------------------------------------------------- summary
 
     def summarize(self) -> int:
@@ -644,3 +956,49 @@ class _Verifier:
 
 
 V = _Verifier()
+
+
+def _main(argv: list[str]) -> int:
+    import argparse
+
+    ap = argparse.ArgumentParser(prog="_verify.py", description="Parent-side commands of a staged plan.")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    g = sub.add_parser("gate", help="pre-execution gate: placeholders, stage graph, one proof per check, sizes, one read each, line width; then the stage index")
+    g.add_argument("plan")
+    h = sub.add_parser("brief", help="write one stage's brief and print the prompt that points to it")
+    h.add_argument("plan")
+    h.add_argument("stage", type=int)
+    h.add_argument("--workdir", help="worktree of an isolated stage")
+    r = sub.add_parser("run-log", help="append one event to the plan's run log")
+    r.add_argument("plan")
+    r.add_argument("stage", help="stage number, or - for a plan-wide event")
+    r.add_argument("event", help="launched | returned | integrated | red | stalled | retry | halted")
+    r.add_argument("detail", nargs="?", default="")
+    args = ap.parse_args(argv)
+
+    if args.cmd == "gate":
+        V.assert_no_placeholders(args.plan)
+        V.assert_stage_graph(args.plan)
+        V.assert_distinct_proofs(args.plan)
+        V.assert_plan_size(args.plan)
+        V.assert_read_budget(args.plan)
+        V.assert_line_width(args.plan)
+        code = V.summarize()
+        print()
+        V.print_stage_index(args.plan)
+        return code
+    if args.cmd == "brief":
+        try:
+            path, k = V.brief(args.plan, args.stage, args.workdir)
+            print(f"brief: {path.as_posix()} (~{k:.1f}k tokens)")
+            print(f"prompt: Read {path.as_posix()} in one read: it is your whole hand-off for this stage. Then execute it.")
+        except ValueError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+        return 0
+    print(V.record_run(args.plan, args.stage, args.event, args.detail))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(_main(sys.argv[1:]))

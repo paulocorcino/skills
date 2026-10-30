@@ -1,6 +1,6 @@
 # Example — Migration X (the parts the planner writes)
 
-What the cognitive parts of a small migration plan look like once filled. Everything else — Execution model, policy, hand-off conventions, Stage 0, the hand-off prompts, the reviewer gate — comes verbatim from `lib/scaffold.py` and is omitted here.
+What the cognitive parts of a small migration plan look like once filled. Everything else — Execution model, policy, hand-off conventions, Stage 0, the hand-off template (all but its plan-level slots), the reviewer gate — comes verbatim from `lib/scaffold.py` and is omitted here.
 
 ```
 ## Context
