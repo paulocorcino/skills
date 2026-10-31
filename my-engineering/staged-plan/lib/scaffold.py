@@ -79,9 +79,11 @@ approved; a track that looks small still runs this way.
    ```
    python3 -B docs/plans/_verify.py run-log docs/plans/{slug}.md <N> <event> "<detail>"
    ```
-   Events: `launched` (tree, branch, brief path, and the executor's handle for the
-   subagent — its id or output file), `returned`, `integrated` (SHA), `red`,
-   `stalled`, `retry`, `halted`. After a compaction, a resume, or any doubt
+   Events: `queued` (ready, waiting for a free slot), `launched` (tree, branch,
+   brief path, and the executor's handle for the subagent — its id or output
+   file), `returned`, `verifying` (integration gates started), `integrated`
+   (SHA, once every gate is green), `red`, `stalled` (launched, then silent past
+   the window), `retry`, `halted`. After a compaction, a resume, or any doubt
    about what is in flight, read the run log and `git worktree list` before
    the next action; a conversation summary is not a source.
 2. Run Stage 0 (Pre-flight) yourself — it is mechanical and needs no
@@ -89,7 +91,8 @@ approved; a track that looks small still runs this way.
 3. **Launch the frontier.** A stage is *ready* when every stage its
    `Depends on:` names is integrated green. Launch ready stages in plan order,
    never more in flight than `Concurrency` (`## Execution policy`), each as a
-   fresh subagent (see `## Executor adapter`), and log `launched`:
+   fresh subagent (see `## Executor adapter`), and log `launched` (a ready
+   stage with no free slot logs `queued`):
    - prompt: the one line printed by
      `python3 -B docs/plans/_verify.py brief docs/plans/{slug}.md <N>`, passed
      verbatim. The command writes the stage's brief (`## Hand-off prompt`
@@ -116,7 +119,7 @@ approved; a track that looks small still runs this way.
    - isolated: `git cherry-pick <stage SHA>` onto the main working tree. A conflict means
      the stage touched a file outside its list: `git cherry-pick --abort` and
      treat it as a scope violation.
-   - then verify **independently** at the integrated `HEAD` — the subagent's
+   - then log `verifying` and verify **independently** at the integrated `HEAD` — the subagent's
      reported results are a claim, not evidence. Re-run the stage's proofs
      yourself — its verify script, or every `Proof:` of its `**Checks:**` list
      run as its own command, never folded into one file-level run — and

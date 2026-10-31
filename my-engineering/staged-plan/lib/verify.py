@@ -1034,7 +1034,11 @@ def _main(argv: list[str]) -> int:
     r = sub.add_parser("run-log", help="append one event to the plan's run log")
     r.add_argument("plan")
     r.add_argument("stage", help="stage number, a phase id in a program, or - for a plan-wide event")
-    r.add_argument("event", help="launched | returned | integrated | red | stalled | retry | halted; phase-started | phase-closed")
+    r.add_argument(
+        "event",
+        help="queued | launched | returned | verifying | integrated | red | stalled | retry | halted; "
+        "phase-started | phase-closed",
+    )
     r.add_argument("detail", nargs="?", default="")
     args = ap.parse_args(argv)
 
