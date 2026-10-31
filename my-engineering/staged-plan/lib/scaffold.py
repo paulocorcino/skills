@@ -317,8 +317,13 @@ costs.
 | critical / * | `opus` |
 
 Do NOT omit `model` (omission inherits the parent's model and defeats the
-cost-tiering — every stage would silently run on the parent's model). For
-Codex / other executors, apply the same vocabulary against their lineup.
+cost-tiering — every stage would silently run on the parent's model).
+
+**Any other executor:** the same shape over its own lineup — `mechanical` on
+its smallest model, `standard` on its middle one, `judgment` and `critical` on
+its largest; `Effort` maps to its reasoning-effort setting where it has one.
+An executor with a single model runs every stage on it and says so in the run
+log at the first launch.
 
 Roles when no stage-level override is present:
 - Parent / orchestrator: `standard / standard`
@@ -372,9 +377,9 @@ def _global_conventions_body(slug: str, report_policy: str) -> str:
 - Commit style: ONE commit per stage with **only the code changes**. The
   post-stage report is written locally and **NOT committed** (reports are
   gitignored in this repo per `--report-policy gitignored`). Trailer:
-  `Co-Authored-By: $EXECUTOR_NAME $EXECUTOR_EMAIL`
-  (substituted by the executor at commit time, e.g.
-  `Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>`).
+  `Co-Authored-By: $EXECUTOR_NAME $EXECUTOR_EMAIL` — the agent and model
+  that wrote the stage, as the executor names itself (its own attribution
+  rule wins); an executor that cannot name itself leaves the trailer out.
 - Reports: local-only artifacts under
   `docs/plans/{slug}-stage-{{N}}-report.md` (gitignored, not versioned).
   The `Commit:` slot in each report stays as `_filled by parent_`; the
@@ -389,9 +394,9 @@ def _global_conventions_body(slug: str, report_policy: str) -> str:
 - Commit style: ONE commit per stage that includes BOTH the code changes AND
   the post-stage report file. The report is staged alongside code; there is
   no separate "report commit". Trailer:
-  `Co-Authored-By: $EXECUTOR_NAME $EXECUTOR_EMAIL`
-  (substituted by the executor at commit time, e.g.
-  `Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>`).
+  `Co-Authored-By: $EXECUTOR_NAME $EXECUTOR_EMAIL` — the agent and model
+  that wrote the stage, as the executor names itself (its own attribution
+  rule wins); an executor that cannot name itself leaves the trailer out.
 - Report content: do NOT include the stage's own commit SHA in the report
   body (impossible: the file is part of the commit). The parent emits the
   canonical stage->SHA mapping in the End-to-end summary table.

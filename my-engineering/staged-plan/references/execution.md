@@ -78,5 +78,5 @@ The between-stage checkpoint's `edit` option exists for what the finished stage'
 
 ## Optional hardening (per plan, not baked in)
 
-- **Hooks for gate enforcement** (`.claude/settings.json` PostToolUse / PreCommit): a confused subagent can ignore a prompt-level gate, never a hook. Configure via `update-config`.
+- **Hooks for gate enforcement:** a confused subagent can ignore a prompt-level gate, never a hook. Any executor: a git `pre-commit` hook that runs the gates. An executor with its own hooks can run them on tool calls too (Claude Code: `PostToolUse` in `.claude/settings.json`).
 - **Subagent summaries in the run log:** a `Stop` hook appending each subagent's final message to `logs/<plan-slug>-run.md`, beside the parent's events.
