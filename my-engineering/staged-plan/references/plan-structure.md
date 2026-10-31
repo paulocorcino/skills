@@ -61,7 +61,7 @@ With concurrency above 1 the block also carries:
 
 ## Procedures
 
-Recipes two or more stages share, one `### <name>` heading each, followed by its numbered steps: the same refactor applied to different files, the same fix over different sites. A stage's Order of operations names the recipe and its input — ``1. Procedure split-to-limit over the sites of `sites.py ts-rule b complexity` `` — and keeps only the steps unique to it. When the work is a list the repo can compute (lint sites, functions over a limit), the input is the command that lists it, not the list. Delete the block when no steps repeat.
+Recipes two or more stages share, one `### <name>` heading each, followed by its numbered steps: the same refactor applied to different files, the same fix over different sites. A stage's Order of operations names the recipe and its input — ``1. Procedure split-to-limit over the sites of `sites.py ts-rule b complexity` `` — and keeps only the steps unique to it. When the work is a list the repo can compute (lint sites, functions over a limit), the input is the command that lists it, not the list. A recipe three or more stages run names its pilot under its heading — `Pilot: Stage 5`, the stage with the smallest input — and every other stage that runs it lists the pilot in `Depends on:`. Delete the block when no steps repeat.
 
 ## Stage block
 

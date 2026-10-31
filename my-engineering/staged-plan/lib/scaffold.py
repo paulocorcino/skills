@@ -128,6 +128,12 @@ approved; a track that looks small still runs this way.
      `## Global conventions` clean (this is what catches two stages that edit
      different files but break each other), commit present in `git log`,
      post-stage report written, scope respected (only declared files touched).
+     The bar holds: the test count is at least the previous integration's, and
+     every limit and ratchet is where the plan set it. A drop or a raise is a
+     ruling — yours, with its cause in the run log — never the stage's.
+   - a **pilot** (`## Procedures` names its first stage): before launching the
+     stages that depend on it, fold what it learned into the recipe and the
+     gates — the later stages read the corrected recipe in their briefs.
    - red after the stage reported green: `git reset --keep HEAD~1` drops the
      pick, then the retry rule applies, from the current `HEAD`.
    - green: log `integrated`, copy `docs/plans/logs/` (and the stage report,
@@ -579,10 +585,14 @@ HANDOFF_CONVENTIONS = """## Hand-off conventions (apply to every stage)
 - MAY NOT touch pre-existing unrelated working-tree edits.
 - MAY NOT skip gates or use --no-verify / bypass hooks.
 - MAY NOT spawn nested subagents (no Agent calls inside this stage).
-- MAY NOT weaken an assertion, delete a test, or skip one to turn a gate
-  green. The stage's `**Checks:**` are the bar you build under, fixed for the
-  whole stage: if a check or an existing test is genuinely wrong, STOP and
-  report.
+- MAY NOT weaken an assertion, delete a test, skip one, or raise a limit
+  (a ratchet's max, a count a check allows) to turn a gate green. The stage's
+  `**Checks:**` are the bar you build under, fixed for the whole stage: if a
+  check, a limit, or an existing test is genuinely wrong, STOP and report.
+  A paragraph that justifies a workaround is that STOP, written as a comment.
+- MAY NOT change the machine outside the tree — install or update a
+  toolchain, edit global config, start or stop a service: report what you
+  need, and the parent provides it.
 
 **Checks and proofs:**
 - Tests assert what the check says, never what the code happens to do —
@@ -743,7 +753,9 @@ def render_handoff_template(slug: str, report_policy: str) -> str:
 PROCEDURES = """## Procedures
 <FILL-OR-DELETE: recipes two or more stages share — one `### <name>` heading per recipe, then its numbered steps.
 A stage's Order of operations names the recipe and the input it runs on (`1. Procedure <name> over the sites of <command>`)
-and keeps only its own steps. Delete this block when no steps repeat across stages.>
+and keeps only its own steps. A recipe that three or more stages run names its pilot under its heading (`Pilot: Stage 5`):
+the first stage to run it, alone; the other stages that run it list the pilot in `Depends on:`.
+Delete this block when no steps repeat across stages.>
 """
 
 
