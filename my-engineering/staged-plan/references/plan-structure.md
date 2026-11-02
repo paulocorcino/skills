@@ -14,6 +14,12 @@ Rendered by `scaffold.py --program`. The planner fills two things:
 Each phase plan is an ordinary staged plan and is filled as the rest of this file describes. Its `## Context`
 names the phases it builds on and the files it shares with phases that run beside it.
 
+## Execution policy
+
+Fixed defaults, recorded as `SKILL.md` lists them. With concurrency above 1 — and in a program — the one `<FILL>` is
+`Worktree root`: an absolute directory chosen in that list's order, with its reason
+(`` `C:/Dev/app/worktrees/` — already in .gitignore ``). A root outside the repo names the limit that keeps it out.
+
 ## Context
 
 Why this track exists, the constraints, what is in scope, and what is out of scope or blocked externally. A reader opening the plan cold learns *why* here and *what* in the stage blocks.

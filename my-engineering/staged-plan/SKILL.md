@@ -113,6 +113,7 @@ Present a short summary — slug, title, stage list with each stage's `Depends o
 5. **Reviewer gate:** per the recommendation above.
 6. **Report policy:** `committed`, or `gitignored` when `.gitignore` already excludes report files (e.g. `*-report.md`, `docs/plans/*-report.md`). Read `.gitignore` to decide.
 7. **Concurrency:** `3` — up to three ready stages in flight; a stage alone in flight runs in place, two or more each run in their own worktree; integration is one at a time. The plan's `## Global conventions` then carries a worktree setup command and the shared runtime resources (ports, database files) the proofs bind. `semi-autonomous` always runs at `1`.
+8. **Worktree root** (Concurrency above 1, or a program's phase trees): the directory every worktree the plan creates lives under, the first that holds — (1) the one the repo already uses: a `.gitignore` entry (`worktrees/`, `.worktrees/`, `.claude/worktrees/`) or trees `git worktree list` already shows inside the repo; (2) `.worktrees/` inside the repo, kept out of git by `.git/info/exclude` at execution; (3) outside the repo, only for a limit the inside cannot meet — a gate tool that walks the tree past `.gitignore`, the platform's path-length limit, disk space — named on the line. An outside root goes into the approval summary for the user's yes; a non-interactive run takes it on the named limit alone.
 
 Deviate only when the user explicitly overrides in the current conversation.
 

@@ -30,6 +30,13 @@ Stages in flight never see each other's code, so the green each one reports was 
 
 The hand-off carries the absolute repo root. A subagent running in a worktree that follows it literally edits the main tree — under the parent's feet and outside its own branch. The `Working directory:` line rebinds the root for that stage; the `MAY NOT write outside your working tree` rule backs it.
 
+## Why the worktree root is inside the repo
+
+Trees inside the repo stay in reach of the repo's own ignore rules, permissions and cleanup, and leave nothing behind
+in the directories around it. The plan names the root because an unnamed one becomes the git habit of a sibling
+directory: on epic #853 and issue #830, nine trees sat beside `C:/Dev/ralphy` while its `.gitignore` already held
+`/worktrees/`. `.git/info/exclude` lives in the shared git directory, so one entry covers every tree.
+
 ## Why worktree setup and shared runtime are declared
 
 A fresh worktree holds only tracked files: no installed dependencies, no untracked env file, no local database. The setup command makes a worktree able to run the gates. Two stages in flight also share the machine: proofs that bind the same port or open the same database file collide and fail in ways neither stage caused. Declaring them at plan time lets each worktree take its own port and database path from env.

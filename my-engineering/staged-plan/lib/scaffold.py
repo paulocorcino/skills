@@ -106,12 +106,13 @@ approved; a track that looks small still runs this way.
      stage in flight at launch; otherwise **isolated**: background, in its own
      worktree of the current `HEAD` on a branch of its own
      (`staged/{slug}/stage-N` when you create it; whatever name the
-     executor's isolation option reports otherwise — record it). Run
-     `## Global conventions` § Worktree setup there first, and write the
-     brief with `--workdir <worktree path>`.
-   Before the first isolated launch, when the worktrees live inside the repo
-   (some executors place them there), add their directory to
-   `.git/info/exclude` so the clean-tree checks keep meaning something.
+     executor's isolation option reports otherwise — record it), under
+     `## Execution policy` § Worktree root. Run `## Global conventions`
+     § Worktree setup there first, and write the brief with
+     `--workdir <worktree path>`.
+   Before the first isolated launch, add a Worktree root inside the repo to
+   `.git/info/exclude` unless `.gitignore` already ignores it, so the
+   clean-tree checks keep meaning something.
    The gate in step 0 guarantees two ready stages never declare the same file:
    a shared file forces a dependency between them.
 4. On each return, **integrate** — one stage at a time, in plan order among
@@ -280,11 +281,13 @@ versioned**: `docs/plans/logs/` is gitignored via the Plan landing commit.
 
 Each stage runs in a fresh context window via whatever delegated-agent
 mechanism the executor provides. Claude Code: `Agent` tool with
-`subagent_type: general-purpose`; an isolated stage adds `isolation: "worktree"`
-and runs in the background — launch every ready stage in one message so they
-run concurrently, and take the worktree path and branch from the tool's
-result. Codex / others: the equivalent fresh-window mechanism plus
-`git worktree add <dir> -b staged/<slug>/stage-N HEAD`. Record the worktree
+`subagent_type: general-purpose`; an isolated stage runs in the background —
+launch every ready stage in one message so they run concurrently. When the
+Worktree root is `.claude/worktrees/`, where `isolation: "worktree"` places its
+trees, add that option and take the path and branch from the tool's result;
+under any other root, create the tree as below and launch without it. Codex /
+others: the equivalent fresh-window mechanism plus
+`git worktree add <Worktree root>/<slug>-s<N> -b staged/<slug>/stage-N HEAD`. Record the worktree
 path, branch, and the subagent's handle (Claude Code: the agent id and its
 output file) in the run log at launch. An executor without
 background delegation or without worktrees runs at Concurrency 1: in place,
@@ -837,6 +840,8 @@ def render_execution_policy(mode: str, working_tree: str, reviewer: str, reviewe
             f"- Concurrency: {concurrency} — at most {concurrency} ready stages in flight; "
             "a stage alone in flight runs in place, the others each in an isolated worktree. "
             "Integration stays one stage at a time."
+            "\n- Worktree root: <FILL: absolute path of the directory every isolated worktree lives under, and why — "
+            "e.g. the repo's `worktrees/`, already in .gitignore; a root outside the repo names the limit that keeps it out>"
         )
     else:
         concurrency_line = "- Concurrency: 1 — one stage at a time, in place."
@@ -954,7 +959,7 @@ file; whoever called it runs nothing else.
    `## Execution model` as its parent, from this same session.
    Phases ready together run side by side: their ready stages form one frontier, never more
    in flight than `Concurrency` below, and each stage is launched, integrated and verified as
-   its own phase plan says, in its own phase's tree.
+   its own phase plan says, in its own phase's tree, under `## Execution policy` § Worktree root.
 3. **Phase close.** A phase is closed when its plan's last step is done (end-to-end
    verification, reviewer gate, summary). Log `phase-closed`, then recompute the ready phases.
    A closed phase lives on in git, its run log and its summary; its plan is not read again.
@@ -977,7 +982,10 @@ def render_program(args: argparse.Namespace) -> str:
         PROGRAM_EXECUTION_MODEL.replace("{slug}", args.slug),
         "## Execution policy\n"
         f"- Concurrency: {args.concurrency} — stages in flight across every phase that runs; each phase\n"
-        "  plan's own policy governs its stages (retries, stall window, working tree, reviewer).\n",
+        "  plan's own policy governs its stages (retries, stall window, working tree, reviewer).\n"
+        "- Worktree root: <FILL: absolute path of the directory each phase's tree lives under, and why — e.g.\n"
+        "  the repo's `worktrees/`, already in .gitignore; a root outside the repo names the limit that\n"
+        "  keeps it out; a root inside goes into `.git/info/exclude` unless `.gitignore` covers it>\n",
         "## Context\n<FILL: why this work is split into phases, what each phase delivers, and the merge order\n"
         "of the pull requests a human opens.>\n",
         "## Phases\n| Phase | Plan | Items | Depends on |\n|---|---|---|---|\n" + rows + "\n",
