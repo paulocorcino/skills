@@ -49,7 +49,7 @@ from pathlib import Path
 # Bumped whenever a primitive is added or its behaviour changes. scaffold.py
 # compares it with the repo's vendored copy and refreshes an older one.
 # Primitives are only ever added, so a refresh never breaks an older plan.
-VERSION = 6
+VERSION = 7
 
 # The Windows console code page (cp1252) cannot print every character a
 # gate emits; an unencodable one would crash summarize() mid-report.
@@ -775,12 +775,26 @@ class _Verifier:
     def _named_recipes(self, section: str, block: str) -> str:
         """The `### <name>` recipes of `## Procedures` that the stage block names.
 
-        A brief carries the recipes its stage runs, not the whole catalogue.
+        A brief carries the recipes its stage runs, not the whole catalogue,
+        and the recipes those recipes name in turn (issue #853: a fit-* recipe
+        ending in `Procedure wrap-wide-lines` reached briefs without it).
         Empty when the stage names none.
         """
         heading, _, body = section.partition("\n")
-        recipes = re.split(r"(?m)^(?=### )", body)
-        kept = [r for r in recipes if r.startswith("### ") and r[4:].splitlines()[0].strip().strip("`") in block]
+        recipes = [r for r in re.split(r"(?m)^(?=### )", body) if r.startswith("### ")]
+
+        def name(recipe: str) -> str:
+            return recipe[4:].splitlines()[0].strip().strip("`")
+
+        kept: list[str] = []
+        reach = block
+        while True:
+            new = [r for r in recipes if r not in kept and name(r) in reach]
+            if not new:
+                break
+            kept += new
+            reach = "".join(new)
+        kept.sort(key=recipes.index)
         return heading + "\n" + "".join(kept).rstrip() + "\n" if kept else ""
 
     def brief_text(self, plan_path: str, n: int, workdir: str | None = None) -> str:
@@ -956,9 +970,23 @@ class _Verifier:
             m = rx.search(body)
             return m.group(1).strip() if m else "?"
 
+        blocks = [(int(m.group(1)), m.group(2)) for m in self._STAGE_BLOCK_RX.finditer(text)]
+        # chain: the stage plus the longest run of stages waiting on it. The
+        # parent launches the ready stage with the longest chain first.
+        dependents: dict[int, list[int]] = {n: [] for n, _ in blocks}
+        for n, body in blocks:
+            for d in re.findall(r"Stage\s+(\d+)", pick(self._DEPENDS_RX, body)):
+                dependents.setdefault(int(d), []).append(n)
+        chain: dict[int, int] = {}
+
+        def chain_of(n: int, seen: frozenset[int] = frozenset()) -> int:
+            if n not in chain:
+                kids = [k for k in dependents.get(n, []) if k not in seen]
+                chain[n] = 1 + max((chain_of(k, seen | {n}) for k in kids), default=0)
+            return chain[n]
+
         print("stage index:")
-        for m in self._STAGE_BLOCK_RX.finditer(text):
-            n, body = int(m.group(1)), m.group(2)
+        for n, body in blocks:
             files: list[str] = []
             in_files = False
             for line in body.splitlines():
@@ -976,7 +1004,8 @@ class _Verifier:
                 f"  Stage {n} | {pick(self._STAGE_TITLE_RX, body)}"
                 f" | {pick(self._TIER_RX, body)}/{pick(self._EFFORT_RX, body)}"
                 f" | {('~' + size.group(1) + 'k') if size else '?'}"
-                f" | depends: {pick(self._DEPENDS_RX, body)} | files: {', '.join(files) or '-'}"
+                f" | depends: {pick(self._DEPENDS_RX, body)} | chain: {chain_of(n)}"
+                f" | files: {', '.join(files) or '-'}"
             )
 
     # --------------------------------------------------------------- run log

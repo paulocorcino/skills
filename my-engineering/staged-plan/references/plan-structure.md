@@ -77,7 +77,7 @@ Recipes two or more stages share, one `### <name>` heading each, followed by its
 | `Size` | `~Nk tokens` = `wc -c` / 2.5 over the files the stage reads. A floor: it ranks stages correctly even though iteration adds more. The gate fails a stage past ~100k. |
 | `Depends on` | Per `SKILL.md` § Decompose into stages. Stage 1 is pre-filled `none`. |
 | `Items` / `Scope` | Backlog ids; one sentence naming the observable outcome. |
-| `Files` | Every file the stage creates, edits, or deletes, each with what changes and why. This list is the scope boundary. |
+| `Files` | Every file the stage creates, edits, or deletes, each with what changes and why. This list is the scope boundary. A file the stage splits lists its new children as a glob (`foo/*.rs`, `wb-notes*.ts`): on #853, phases that did had no scope rulings, the others five. |
 | `Order of operations` | The stage's own steps up to its proofs; the hand-off template closes every stage with proofs + gates → report → commit. Where a proof is a new test, its step comes before the implementation step. A step a `## Procedures` recipe already holds is named, not repeated. |
 | `Checks` | Per `SKILL.md` § Write the checks: one claim with a concrete value each, a proof naming one test or command. Number them `C<stage>.<k>`. |
 | `Verify script` line | Keep and generate the script, or delete the line — see `verify-scripts.md`. |

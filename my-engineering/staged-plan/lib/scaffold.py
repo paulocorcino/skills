@@ -89,8 +89,8 @@ approved; a track that looks small still runs this way.
 2. Run Stage 0 (Pre-flight) yourself — it is mechanical and needs no
    subagent. If any gate is red on the baseline, abort.
 3. **Launch the frontier.** A stage is *ready* when every stage its
-   `Depends on:` names is integrated green. Launch ready stages in plan order,
-   never more in flight than `Concurrency` (`## Execution policy`), each as a
+   `Depends on:` names is integrated green. Launch ready stages longest
+   `chain` first (the gate's stage index), then in plan order, never more in flight than `Concurrency` (`## Execution policy`), each as a
    fresh subagent (see `## Executor adapter`), and log `launched` (a ready
    stage with no free slot logs `queued`):
    - prompt: the one line printed by
@@ -600,7 +600,8 @@ HANDOFF_CONVENTIONS = """## Hand-off conventions (apply to every stage)
   A paragraph that justifies a workaround is that STOP, written as a comment.
 - MAY NOT change the machine outside the tree — install or update a
   toolchain, edit global config, start or stop a service: report what you
-  need, and the parent provides it.
+  need, and the parent provides it. A tool call denied by a permission check
+  is the same: stop that line of work and report the exact call and why.
 
 **Checks and proofs:**
 - Tests assert what the check says, never what the code happens to do —
@@ -957,8 +958,8 @@ file; whoever called it runs nothing else.
 2. **Phase frontier.** A phase is *ready* when every phase its `Depends on:` names is closed.
    Start ready phases in table order: log `phase-started`, then run that phase plan's own
    `## Execution model` as its parent, from this same session.
-   Phases ready together run side by side: their ready stages form one frontier, never more
-   in flight than `Concurrency` below, and each stage is launched, integrated and verified as
+   Phases ready together run side by side: their ready stages form one frontier, launched
+   longest `chain` first across phases, never more in flight than `Concurrency` below, and each stage is launched, integrated and verified as
    its own phase plan says, in its own phase's tree, under `## Execution policy` § Worktree root.
 3. **Phase close.** A phase is closed when its plan's last step is done (end-to-end
    verification, reviewer gate, summary). Log `phase-closed`, then recompute the ready phases.
