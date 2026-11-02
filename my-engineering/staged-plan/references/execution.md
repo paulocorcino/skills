@@ -12,7 +12,7 @@ A fresh context is not independence on its own: whoever writes the reviewer's br
 
 ## Why the parent answers the reviewer's questions first
 
-Most open findings are questions the repository already answers — is this path reachable, does a caller depend on that value, what did the ADR decide. Sending them to a human costs a round-trip and teaches the human to skim the pending list. The parent holds the plan, the diff, and the tools to look, so it answers with evidence; what reaches a human is what a wrong guess would make expensive or unknowable: a regression, data loss, a high-risk or irreversible change, or context that lives outside the repo. The criteria name the stakes and leave the investigation to the parent's judgment.
+Most open findings are questions the repository already answers — is this path reachable, does a caller depend on that value, what did a recorded decision settle. Sending them to a human costs a round-trip and teaches the human to skim the pending list. The parent holds the plan, the diff, and the tools to look, so it answers with evidence; what reaches a human is what a wrong guess would make expensive or unknowable: a regression, data loss, a high-risk or irreversible change, or context that lives outside the repo. The criteria name the stakes and leave the investigation to the parent's judgment.
 
 ## Why delegated planning returns `<<PLAN_READY>>`
 
@@ -34,8 +34,7 @@ The hand-off carries the absolute repo root. A subagent running in a worktree th
 
 Trees inside the repo stay in reach of the repo's own ignore rules, permissions and cleanup, and leave nothing behind
 in the directories around it. The plan names the root because an unnamed one becomes the git habit of a sibling
-directory: on epic #853 and issue #830, nine trees sat beside `C:/Dev/ralphy` while its `.gitignore` already held
-`/worktrees/`. `.git/info/exclude` lives in the shared git directory, so one entry covers every tree.
+directory, even beside a `.gitignore` that already reserves one inside the repo. `.git/info/exclude` lives in the shared git directory, so one entry covers every tree.
 
 ## Why worktree setup and shared runtime are declared
 

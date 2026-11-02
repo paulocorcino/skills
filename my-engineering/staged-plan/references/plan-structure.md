@@ -7,7 +7,7 @@
 Rendered by `scaffold.py --program`. The planner fills two things:
 - `## Context`: why the work is phased, what each phase delivers, and the merge order of the pull requests a human
   opens afterwards.
-- `## Phases`: one row per phase plan — ``| A | `<slug>-a.md` | #815, #808 | none |`` — its backlog ids and the
+- `## Phases`: one row per phase plan — ``| A | `<slug>-a.md` | <backlog ids> | none |`` — its backlog ids and the
   earlier phases it builds on. A phase depends on another when it starts from that phase's branch tip or needs a
   file it changes; phases on separate branches whose shared files meet only at merge do not.
 
@@ -18,7 +18,7 @@ names the phases it builds on and the files it shares with phases that run besid
 
 Fixed defaults, recorded as `SKILL.md` lists them. With concurrency above 1 — and in a program — the one `<FILL>` is
 `Worktree root`: an absolute directory chosen in that list's order, with its reason
-(`` `C:/Dev/app/worktrees/` — already in .gitignore ``). A root outside the repo names the limit that keeps it out.
+(`` `<repo root>/worktrees/` — already in .gitignore ``). A root outside the repo names the limit that keeps it out.
 
 ## Context
 
@@ -51,7 +51,7 @@ Past that, one list item per door, its parts labelled and wrapped:
   Rejected: a boolean `is_archived` — cannot express the next state.
 ```
 
-The rejected alternative carries the property that disqualified it; for a new pattern it is the convention already in the code. Where the choice was forced, name the constraint instead. With no door, write the single line `None — <why nothing here is hard to reverse>`. When the repo keeps ADRs or a decision log, mirror the rows that outlive the track there during Phase 1.5.
+The rejected alternative carries the property that disqualified it; for a new pattern it is the convention already in the code. Where the choice was forced, name the constraint instead. With no door, write the single line `None — <why nothing here is hard to reverse>`. When the repo keeps decision records, mirror the rows that outlive the track there during Phase 1.5.
 
 ## Alternatives considered
 
@@ -77,7 +77,7 @@ Recipes two or more stages share, one `### <name>` heading each, followed by its
 | `Size` | `~Nk tokens` = `wc -c` / 2.5 over the files the stage reads. A floor: it ranks stages correctly even though iteration adds more. The gate fails a stage past ~100k. |
 | `Depends on` | Per `SKILL.md` § Decompose into stages. Stage 1 is pre-filled `none`. |
 | `Items` / `Scope` | Backlog ids; one sentence naming the observable outcome. |
-| `Files` | Every file the stage creates, edits, or deletes, each with what changes and why. This list is the scope boundary. A file the stage splits lists its new children as a glob (`foo/*.rs`, `wb-notes*.ts`): on #853, phases that did had no scope rulings, the others five. |
+| `Files` | Every file the stage creates, edits, or deletes, each with what changes and why. This list is the scope boundary. A file the stage splits lists its new children as a glob (`foo/*.rs`, `notes*.ts`), so the split needs no scope ruling. |
 | `Order of operations` | The stage's own steps up to its proofs; the hand-off template closes every stage with proofs + gates → report → commit. Where a proof is a new test, its step comes before the implementation step. A step a `## Procedures` recipe already holds is named, not repeated. |
 | `Checks` | Per `SKILL.md` § Write the checks: one claim with a concrete value each, a proof naming one test or command. Number them `C<stage>.<k>`. |
 | `Verify script` line | Keep and generate the script, or delete the line — see `verify-scripts.md`. |

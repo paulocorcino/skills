@@ -776,8 +776,7 @@ class _Verifier:
         """The `### <name>` recipes of `## Procedures` that the stage block names.
 
         A brief carries the recipes its stage runs, not the whole catalogue,
-        and the recipes those recipes name in turn (issue #853: a fit-* recipe
-        ending in `Procedure wrap-wide-lines` reached briefs without it).
+        and the recipes those recipes name in turn.
         Empty when the stage names none.
         """
         heading, _, body = section.partition("\n")
