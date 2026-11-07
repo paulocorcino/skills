@@ -27,7 +27,7 @@ Turning Query Store on (`ALTER DATABASE … SET QUERY_STORE = ON`) is a change t
 
 | Source | Shows | Needs | Window |
 |---|---|---|---|
-| `pg_stat_statements` | per normalized statement: calls, total and mean time, rows, shared blocks hit / read, temp blocks written (spills) | the extension in `shared_preload_libraries`; role `pg_read_all_stats` | since `pg_stat_statements_reset()` or restart |
+| `pg_stat_statements` | per normalized statement: calls, total and mean time, rows, shared blocks hit / read, temp blocks written (spills), `wal_bytes` (13+: the statement's write amplification in log bytes) | the extension in `shared_preload_libraries`; role `pg_read_all_stats` | since `pg_stat_statements_reset()` or restart |
 | `pg_stat_user_tables` / `pg_stat_user_indexes` | sequential vs index scans per table; indexes never scanned; dead vs live tuples and last autovacuum (bloat) | `pg_read_all_stats` | since the statistics reset |
 | `pg_stat_activity`, `pg_locks` | what sessions wait on now | `pg_read_all_stats` | now |
 | `EXPLAIN` | the estimated plan, no execution | `SELECT` on the tables | — |

@@ -4,9 +4,10 @@ description: Audit a database and the code that uses it for cost and common prob
 disable-model-invocation: true
 ---
 
-Find where a database and its code spend the most — CPU, reads, time — and where they carry the common problems that cost money or correctness, then hand the user a ranked report and deepen the finding they pick. Two leading words carry the audit:
+Find where a database and its code spend the most — CPU, reads, time — and where they carry the common problems that cost money or correctness, then hand the user a ranked report and deepen the finding they pick. Three leading words carry the audit:
 
 - **Follow the cost.** Start from what the engine already records about its own spending, trace the costliest statements to the code that issues them, and sweep that hot code first. Cold code earns attention only for correctness problems.
+- **Amplification** is how much work the engine does per unit of useful work, measured as three ratios: **read amplification**, rows read per row returned; **write amplification**, bytes written (pages, log, every index maintained) per row changed; **space amplification**, the table and its indexes over the live data they hold. A finding states the ratio it moves, before and after.
 - **Evidence** comes in three kinds, and every finding names its kind: **measured** (the engine's statistics or a plan show it), **structural** (the catalog or the code shows it), **speculative** (a heuristic suggests it). A gain is claimed only from measured evidence.
 
 Standing rules:
@@ -32,9 +33,7 @@ Done when every statement above the threshold has its numbers and its plan summa
 
 Trace each costly statement to the code that issues it: a stored routine by its object name, application code by the statement's normalized shape, the ORM call that generates it, or the loop that repeats it — **every costly statement traced, or flagged *origin unknown***. Behind an ORM, match the statement's shape to the query-builder call that produces it: its tables, predicates, and ordering survive generation. Several *origin unknown* flags are themselves a finding: recommend query tags, the comment the ORM or a sqlcommenter library writes into each statement naming its call site, so the engine's own cost views name the origin next time. Then sweep the code for the problems in `COMMON-PROBLEMS.md`: the hot code first, the rest only for the problems marked as correctness risks. With no live branch, the sweep covers the code and the carved DDL, prioritized by structural signals — request handlers, loops, report and batch paths.
 
-Then **follow the cost upward**, from statements to the access patterns they share and from each pattern to the design decision behind it: read [`DESIGN-DEBT.md`](DESIGN-DEBT.md).
-
-Done when every costly statement has its origin or its flag, the checklist has been swept across the hot code, and every design-debt pattern has been checked.
+Done when every costly statement has its origin or its flag, every cost row of the checklist has been swept across the hot code, and every correctness row across all of it.
 
 ## 4. Classify
 
@@ -48,7 +47,13 @@ A speculative performance finding is never High. State the thresholds you used i
 
 Done when every finding carries its severity, evidence kind, and location (file and line, or database object).
 
-## 5. Report
+## 5. Follow the cost upward
+
+With every statement-level finding classified, go from the statements to the access patterns they share, and from each pattern to the design decision behind it: read [`DESIGN-DEBT.md`](DESIGN-DEBT.md). Its cards add to the findings of steps 3 and 4 and replace none of them.
+
+Done when every design-debt pattern has been checked: each match a card, or a rejection recorded with its reason.
+
+## 6. Report
 
 Write `docs/db-model/audit/YYYY-MM-DD.md` (`docs/audit/` when the repo has no model docs): the window and sources the numbers cover; a summary — how many High, Medium, Low; **one top recommendation** — what to do first if only one thing gets done, and why; then one card per finding, High first:
 
@@ -68,7 +73,7 @@ After the statement cards, a **Design debt** section holds the design-debt cards
 
 Leave the report staged for the user to commit. Done when the report is written and the user is asked which card to deepen.
 
-## 6. Deepen the chosen card
+## 7. Deepen the chosen card
 
 - **A performance change** is proven before it is proposed as a ticket: the plan before and after on a copy of the database carrying the change (an index, a rewritten predicate), and `run` measurements on that copy — or in production only with the user's authorization. The card's expected benefit becomes measured, or the card says it stayed unproven.
 - **A modeling problem** goes to the `database-modeling` grill, on the theme it touches.
