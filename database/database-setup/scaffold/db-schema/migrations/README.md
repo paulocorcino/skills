@@ -13,6 +13,13 @@ once merged, a migration is **never** edited.
   built yet) is what will prove both tell the same truth.
 - Name: `NNNN_<verb>_<object>.sql` (e.g. `0007_add_email_customer.sql`).
 
+**Mirror mode** (declared in the repo's agent instructions file): the history lives in
+the ORM's migrations folder, and this folder stays empty. Every rule below applies to
+those migrations as written, including the ones the ORM generates: review the generated
+SQL before it merges. A migration the ORM cannot generate (a routine, a trigger, a
+policy, a grant) is written by hand in the ORM's folder, in the ORM's custom-migration
+format.
+
 ## Safety checklist (❌ → ✅) — expand/contract
 
 Inspired by Strong Migrations. The automatable ones become a tool check.

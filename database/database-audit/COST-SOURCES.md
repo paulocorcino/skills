@@ -7,6 +7,8 @@ Three cautions apply to every engine:
 - **Query text can carry data** — a literal email, document number, or name written into the SQL. Normalize before it leaves the tool: literals → `?`.
 - **Windows differ.** Cumulative views reset on restart or when a plan leaves the cache; persisted stores keep days. Always say which window a number covers.
 - **Measuring by executing is load.** Estimated plans never execute; an actual measurement runs the statement — on a copy, or in production with the user's authorization.
+- **Measure as the application's account.** Row-level security adds its filter to the plan of every account it applies to, so a plan read as the owner or a superuser, which bypasses it, is a different plan: measure with the application's role and its scope set (the tenant or session setting its policies read).
+- **Routines hide their statements.** A statement run inside a function, procedure, or trigger reaches the cost views only where the engine tracks nested statements: turn that tracking on, or a costly routine shows as its one calling statement, with its inner work unattributed.
 
 ## SQL Server
 
@@ -31,6 +33,7 @@ Turning Query Store on (`ALTER DATABASE … SET QUERY_STORE = ON`) is a change t
 | `EXPLAIN` | the estimated plan, no execution | `SELECT` on the tables | — |
 | `EXPLAIN (ANALYZE, BUFFERS)` | actual rows, time, buffers — **executes**: wrap it in `BEGIN READ ONLY … ROLLBACK` | same | — |
 | `log_min_duration_statement`, `auto_explain` | slow statements in the server log | access to the log | the log's retention |
+| `pg_stat_statements.track = all`; `auto_explain.log_nested_statements` | statements nested in functions and triggers, counted and planned on their own; `jit_functions` / `jit_generation_time` per statement (JIT compile cost) | a setting the database owner changes | as the views above |
 
 ## MySQL / MariaDB
 

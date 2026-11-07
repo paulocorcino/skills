@@ -11,11 +11,12 @@ Install the schema method this skill travels with: desired state declared in pla
 - The target must be a git repository; when it is not, offer `git init` and wait for the user's answer.
 - **An existing `db-schema/`** means this is not an install. Tell the user it exists and ask for authorization before going further; this skill installs only. With authorization, compare the repo's copy against `scaffold/` file by file and report each difference: an improvement the repo made becomes a **harvest candidate** for the maintainer (file, what changed, why it looks like an improvement), and a file the scaffold has moved past is reported with the change it would bring. Done when the user has the report; the repo and `scaffold/` stay as they were unless the user directs a change to the repo.
 - **The agent instructions file.** Identify the file the project already uses for agent instructions (`AGENTS.md`, `CLAUDE.md`, or another the project's tooling reads) and name it to the user — that is where step 4 writes. When the project has none, propose creating `AGENTS.md` and create it only with the user's authorization.
+- **The DDL's owner.** Look for an ORM that writes the schema: its schema or entity definitions and a migrations folder it generates or applies (Drizzle, Prisma, Django, Alembic, EF Core, Hibernate, Rails, …). Found one → the mode is the user's decision, put with its trade-off: **mirror mode** keeps the ORM as the DDL's owner and carves `db-schema/` from a database its migrations built (recommend it when those migrations already deploy); **source mode** moves ownership to `db-schema/`, and the ORM's mapping follows the declared schema. Found none → source mode, with nothing to ask. Done when the mode is settled — and, in mirror mode, the ORM, its schema path, and its migrations path are named.
 - Python 3.11+ available. Tool dependencies have a single pinned source — `db-schema/tools/_deps.py` (no requirements file, by design); the CI workflow shows the one-liner that installs them.
 
 ## 2. Copy the scaffold
 
-Copy every tracked file of `scaffold/` into the repo root **verbatim**, byte for byte — derived files such as `__pycache__/` stay behind:
+Copy every tracked file of `scaffold/` into the repo root **verbatim**, byte for byte — derived files such as `__pycache__/` stay behind. A file the repo already has at a target path (an ADR index, a workflow) stays as it is: report it to the user with what the scaffold's version would add, and merge that part only on their word. The files:
 
 - `db-schema/` — folder skeleton with its per-folder READMEs (each one is the instruction set for work done in that folder) and `tools/` (`verify.py`, `lint.py`, `erdgen.py`, `buildsql.py`, `doccheck.py`, `_dialect.py`, `_deps.py`, `_paths.py`)
 - `docs/db-model/README.md` — the domain documentation lives **outside** the kit, in the repo's own docs tree: the DDL is code, the model is prose, and prose belongs where the rest of the project's prose lives. Only its `README.md` (skeleton and growth contract) ships; the model itself is grown from decisions or evidence
@@ -67,6 +68,14 @@ Append to the agent instructions file identified in step 1, leaving what is alre
   green (run from the repo root).
 ```
 
+In mirror mode, the block's `DDL lives in` line becomes the mode line below, filled from step 1, and the choice is recorded as an ADR in `docs/adr/` (the alternative rejected, and why):
+
+```markdown
+- Mode: **mirror**: <ORM> owns the DDL (schema `<path>`, migrations `<path>`);
+  `db-schema/` is its carved mirror, written by `database-sync`; the domain
+  documentation lives in `docs/db-model/`.
+```
+
 ## 5. Prove it green
 
 `python db-schema/tools/verify.py` from the repo root must pass on the virgin scaffold — empty pipeline steps report clean, and no tool invents a dialect. When it fails here, the installation is wrong; fix it before handing off.
@@ -77,3 +86,4 @@ Setup gives structure; it decides nothing. Offer the next step:
 
 - **Greenfield** (schema to be designed) → the `database-modeling` grill; its first theme settles the canonical dialect, which creates `db-schema/.sqlfluff`.
 - **Brownfield** (existing database to govern) → the `database-adoption` skill; its probe records the source dialect and puts the canonical-dialect decision to the user.
+- **Mirror mode** → the `database-adoption` skill, against a private database the ORM's migrations built: it carves the first mirror. The canonical dialect is the engine the migrations target.

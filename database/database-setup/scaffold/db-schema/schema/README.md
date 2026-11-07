@@ -3,6 +3,11 @@
 Schema declared in plain SQL. This is not history (that's `migrations/`); it is the
 **final state** the database must have. Each subfolder has its own README.
 
+In **mirror mode** (declared in the repo's agent instructions file) this folder is the
+carved state of a database the ORM's migrations built: the `database-sync` skill writes
+it, and a schema change starts in the ORM's schema and migrations instead. The rules
+below describe what sync writes.
+
 | Subfolder | What lives here | Level |
 |---|---|---|
 | `tables/` | one `CREATE TABLE` per file, canonical dialect | N1/N2 |

@@ -10,6 +10,20 @@ has a `README.md`** with the specific instruction and a template of what to put 
 Finish every schema change with `python db-schema/tools/verify.py` green.
 Every change follows the instruction of the folder where the work happens.
 
+## Source mode or mirror mode
+
+The repo's agent instructions file declares the mode; with no declaration, it is source
+mode (doctrine P1).
+
+- **Source mode** — a schema change is written in `db-schema/schema/`, and its migration
+  in `db-schema/migrations/`. The table below routes every task.
+- **Mirror mode** — the ORM owns the DDL. A schema change is written in the ORM's schema
+  and its migrations folder (the declaration names both), applied to a private database,
+  and then carved into `db-schema/` by the `database-sync` skill, in the same change.
+  `db-schema/schema/` is carved, never written by hand: a hand edit reconciles as `STALE`.
+  The rows below for `schema/` and `migrations/` read as "the ORM's schema and
+  migrations, then sync"; every other row holds as written.
+
 ## Going to... → go to the folder (the instruction is in its README)
 
 | Going to...                                | Folder                                            |
@@ -46,6 +60,9 @@ as an `UNDEPLOYED` warning (doesn't fail); after the migration lands it flips to
 `APPLIED` — re-run `extract_<dialect>.py inventory` to fold it into the baseline
 (`db-schema/baseline/`, versioned — commit every move; a missing baseline is restored
 from git, never rebuilt over drift).
+In mirror mode the ORM's migrations are the repo's own writer: a finding one of them
+explains is carved into the mirror, and only a finding no migration explains is drift
+from outside the repo.
 When deploys start flowing only from the repo, the arrow inverts — drift becomes
 an alarm that someone bypassed the process; record that flip as an ADR.
 

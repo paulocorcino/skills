@@ -13,7 +13,7 @@ Bring an existing database under `db-schema/` governance. The live schema is the
 
 ## 1. Locate the connection
 
-Search the project and every application for how it already reaches the database: env files, `docker-compose`/Dockerfile, framework config (Django settings, Spring `application.yml`, Prisma, knexfile, …), docs. **Secret values stay out of context:** read secret-bearing files (`.env` and kin) for filenames, variable names, and structure only — the connection script reads the values from the environment at runtime. Done when you hold a connection recipe — engine, host, port, database, credential source — or have established that none exists, and every application the user named has its location in the ledger.
+Search the project and every application for how it already reaches the database: env files, `docker-compose`/Dockerfile, framework config (Django settings, Spring `application.yml`, Prisma, knexfile, …), docs. **Secret values stay out of context:** read secret-bearing files (`.env` and kin) for filenames, variable names, and structure only — the connection script reads the values from the environment at runtime. An application that maps the database through an ORM (entity or schema definitions plus a migrations folder) opens a branch: read [`ORM.md`](ORM.md) before step 3. Done when you hold a connection recipe — engine, host, port, database, credential source — or have established that none exists, and every application the user named has its location in the ledger.
 
 ## 2. Wire the env
 

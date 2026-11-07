@@ -11,7 +11,7 @@ needs an ADR.
 
 | # | Principle | Practical consequence |
 |---|---|---|
-| P1 | **A single source of truth per fact** | `schema/` declares the desired state; everything else is generated or derived. Nothing generated is hand-maintained. |
+| P1 | **A single source of truth per fact** | One owner writes the DDL, declared once per repo. **Source mode** (the default): `schema/` declares the desired state; everything else is generated or derived. **Mirror mode**: the application's ORM and its migrations own the DDL, and `schema/` is carved from a database those migrations built, a reviewable one-file-per-object view of the current state. Either way, nothing generated is hand-maintained. |
 | P2 | **SQL is the model's native language** | The agent writes SQL, not an invented DSL. Lower error rate, immediate validation, no generator to maintain. |
 | P3 | **Verifiable → tool; judgment → short prose** | Style is SQLFluff's; transpilability is sqlglot's; coherence is CI's. Markdown instructions only for what needs judgment. |
 | P4 | **Semantic loss is an explicit decision, never magic translation** | What doesn't transpile cleanly becomes a reviewable override — the build fails until it exists. |

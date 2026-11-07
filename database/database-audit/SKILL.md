@@ -30,9 +30,11 @@ Done when every statement above the threshold has its numbers and its plan summa
 
 ## 3. From cost to code
 
-Trace each costly statement to the code that issues it: a stored routine by its object name, application code by the statement's normalized shape, the ORM call that generates it, or the loop that repeats it — **every costly statement traced, or flagged *origin unknown***. Then sweep the code for the problems in `COMMON-PROBLEMS.md`: the hot code first, the rest only for the problems marked as correctness risks. With no live branch, the sweep covers the code and the carved DDL, prioritized by structural signals — request handlers, loops, report and batch paths.
+Trace each costly statement to the code that issues it: a stored routine by its object name, application code by the statement's normalized shape, the ORM call that generates it, or the loop that repeats it — **every costly statement traced, or flagged *origin unknown***. Behind an ORM, match the statement's shape to the query-builder call that produces it: its tables, predicates, and ordering survive generation. Several *origin unknown* flags are themselves a finding: recommend query tags, the comment the ORM or a sqlcommenter library writes into each statement naming its call site, so the engine's own cost views name the origin next time. Then sweep the code for the problems in `COMMON-PROBLEMS.md`: the hot code first, the rest only for the problems marked as correctness risks. With no live branch, the sweep covers the code and the carved DDL, prioritized by structural signals — request handlers, loops, report and batch paths.
 
-Done when every costly statement has its origin or its flag, and the checklist has been swept across the hot code.
+Then **follow the cost upward**, from statements to the access patterns they share and from each pattern to the design decision behind it: read [`DESIGN-DEBT.md`](DESIGN-DEBT.md).
+
+Done when every costly statement has its origin or its flag, the checklist has been swept across the hot code, and every design-debt pattern has been checked.
 
 ## 4. Classify
 
@@ -61,6 +63,8 @@ Write `docs/db-model/audit/YYYY-MM-DD.md` (`docs/audit/` when the repo has no mo
 - **Risk and reversibility:** <what could break; how to undo>
 - **Route:** <modeling decision · ticket · protected change sequence · ADR>
 ```
+
+After the statement cards, a **Design debt** section holds the design-debt cards (`DESIGN-DEBT.md`), High first, followed by the patterns weighed and rejected, each with its reason.
 
 Leave the report staged for the user to commit. Done when the report is written and the user is asked which card to deepen.
 
