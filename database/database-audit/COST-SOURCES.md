@@ -33,6 +33,7 @@ Turning Query Store on (`ALTER DATABASE … SET QUERY_STORE = ON`) is a change t
 | `EXPLAIN` | the estimated plan, no execution | `SELECT` on the tables | — |
 | `EXPLAIN (ANALYZE, BUFFERS)` | actual rows, time, buffers — **executes**: wrap it in `BEGIN READ ONLY … ROLLBACK` | same | — |
 | `log_min_duration_statement`, `auto_explain` | slow statements in the server log | access to the log | the log's retention |
+| `pg_stat_statements.track_planning = on` | plan time per statement (`total_plan_time`); off by default, so planning reads as zero, and a statement or routine that plans more than it executes hides its cost | a setting the database owner changes | as the views above |
 | `pg_stat_statements.track = all`; `auto_explain.log_nested_statements` | statements nested in functions and triggers, counted and planned on their own; `jit_functions` / `jit_generation_time` per statement (JIT compile cost) | a setting the database owner changes | as the views above |
 
 ## MySQL / MariaDB
