@@ -10,12 +10,18 @@ the config where the comment says, keeping the file's line endings.
   debt.py clippy --help-list HELP --sites SITES... --groups g,.. [--target l,..]
                  [--noise NOISE.json] [--plan PATH]
   debt.py golangci --sites SITES... [--noise NOISE.json] [--plan PATH] [--by-id gosec,gocritic]
-  debt.py shrink BASE CONFIG    # fails when the debt list of CONFIG grew against BASE
+  debt.py ruff --sites SITES... [--noise NOISE.json] [--plan PATH]
+  debt.py mypy --sites SITES... [--noise NOISE.json] [--plan PATH]
+  debt.py shrink BASE CONFIG [--plan PLAN]   # fails when the debt list of CONFIG grew against BASE
 
 `shrink` is the check that keeps the list going one way: an entry that BASE does
 not have, or a count above its BASE count, fails it. CI runs it against the base
 branch: `git show origin/main:Cargo.toml > base.toml && debt.py shrink base.toml Cargo.toml`.
 A base with no debt list (or no file) passes: that change brings the first list.
+`shrink` also fails when a `debt:` comment is tied to no entry (a config form it
+does not read would pass any growth), and on a new `noise:` entry whose reason
+cites no decision id (`D3`, `ADR-12`) found in PLAN: a rule off for good is a
+decision, not a way out of the debt list.
 
   LIST     oxlint --rules --format json, of the pinned version
   CONFIG   the repo's .oxlintrc.json today (its plugins, categories and rules)
@@ -176,9 +182,51 @@ def clippy(args: argparse.Namespace) -> int:
     return 0
 
 
-# A key (`"rule": ...`, `lint = ...`) or a YAML list item (`- linter`).
-_KEY = r'^\s*(?:-\s+"?([\w/@.-]+)"?(?=\s*(?:#|$))|"?([\w/@.-]+)"?\s*[:=])'
-_COUNT = r'(?:#|//)\s*debt:\s*(\d+) sites?'
+def _ranked(paths: list[str], skip: set[str]) -> list[tuple[int, str]]:
+    sites: dict[str, set[str]] = {}
+    for p in paths:
+        for rule, locs in json.loads(Path(p).read_text(encoding="utf-8")).items():
+            sites.setdefault(rule.split(":")[-1], set()).update(locs)
+    return sorted(((len(v), k) for k, v in sites.items() if v and k not in skip), key=lambda x: (-x[0], x[1]))
+
+
+def ruff(args: argparse.Namespace) -> int:
+    noise = json.loads(Path(args.noise).read_text(encoding="utf-8")) if args.noise else {}
+    plan = args.plan or "the transition plan"
+    debts = _ranked(args.sites, set(noise))
+    out = ['select = ["ALL"]',
+           f"# The lint gate: every rule is on. A code in `ignore` is debt that {plan}",
+           "# turns on (this list only shrinks), or noise, off for good with its reason.",
+           "ignore = ["]
+    for code in sorted(noise):
+        out += [f"  # noise: {noise[code]}", f'  "{code}",']
+    for n, code in debts:
+        out += [f"  # debt: {plural(n)}", f'  "{code}",']
+    out.append("]")
+    print("\n".join(out))
+    print(f"\n{len(debts)} codes in debt ({sum(n for n, _ in debts)} sites), {len(noise)} noise", file=sys.stderr)
+    return 0
+
+
+def mypy(args: argparse.Namespace) -> int:
+    noise = json.loads(Path(args.noise).read_text(encoding="utf-8")) if args.noise else {}
+    plan = args.plan or "the transition plan"
+    enabled = {x.strip() for x in (args.enabled or "").split(",") if x.strip()}
+    debts = _ranked(args.sites, set(noise))
+    out = [f"# The type gate: `strict`. A code in `disable_error_code` is debt that {plan}",
+           "# turns on (this list only shrinks), or noise, off for good with its reason.",
+           "disable_error_code ="]
+    for code in sorted(noise):
+        out += [f"    # noise: {noise[code]}", f"    {code},"]
+    for n, code in debts:
+        out += [f"    # debt: {plural(n)}", f"    {code},"]
+    print("\n".join(out))
+    clash = sorted(enabled & {c for _, c in debts})
+    if clash:
+        print("\nremove from enable_error_code while they have debt (mypy does not disable a code "
+              f"that enable_error_code names): {', '.join(clash)}", file=sys.stderr)
+    print(f"{len(debts)} codes in debt ({sum(n for n, _ in debts)} sites), {len(noise)} noise", file=sys.stderr)
+    return 0
 
 
 _BY_ID = {"gosec": "excludes", "gocritic": "disabled-checks"}
@@ -224,38 +272,94 @@ def golangci(args: argparse.Namespace) -> int:
     return 0
 
 
-def debt_entries(text: str) -> dict[str, int]:
-    """The debt entries of a config: a `debt: N` comment on its own line above the
-    entry, or at the end of the entry's line."""
-    out: dict[str, int] = {}
-    pending: int | None = None
+# One entry per line, in any of the config forms a debt list takes:
+#   "rule": ...  /  lint = ...        a key (JSON, TOML table)
+#   - linter                          a YAML list item
+#   "CODE",                           a TOML array item (ruff `ignore`)
+#   error-code,                       an INI list item (mypy `disable_error_code`)
+_KEY = (r'^\s*(?:-\s+"?(?P<yaml>[\w/@.-]+)"?(?=\s*(?:#|$))'
+        r'|"(?P<item>[\w/@.-]+)",?(?=\s*(?:#|//|$))'
+        r'|"?(?P<key>[\w/@.-]+)"?\s*[:=]'
+        r'|(?P<bare>[A-Za-z][\w-]*),?(?=\s*(?:#|$)))')
+_ITEMS = re.compile(r'^\s*(?:"[\w/@.-]+",?\s*)+(?:#.*)?$')
+_COUNT = r'(?:#|//)\s*debt:\s*(\d+) sites?'
+_NOISE = r'(?:#|//)\s*noise:\s*(.+?)\s*$'
+_DECISION = re.compile(r'\b(D\d+|ADR-\d+)\b')
+
+
+def _name(m: re.Match) -> str:
+    return m.group("yaml") or m.group("item") or m.group("key") or m.group("bare")
+
+
+def entries(text: str) -> tuple[dict[str, int], dict[str, str], int]:
+    """The debt and noise entries of a config, and the count of `debt:` comments
+    tied to no entry. A comment sits on its own line above its entry, or at the
+    end of the entry's line; a noise comment may cover a line of several items."""
+    debt: dict[str, int] = {}
+    noise: dict[str, str] = {}
+    comments = 0
+    pending_debt: int | None = None
+    pending_noise: str | None = None
     for line in text.replace("\r\n", "\n").split("\n"):
-        inline = re.match(_KEY + r'.*?' + _COUNT, line)
-        alone = re.match(r'^\s*' + _COUNT + r'\s*$', line)
+        inline_debt = re.match(_KEY + r'.*?' + _COUNT, line)
+        inline_noise = re.match(_KEY + r'.*?' + _NOISE, line)
+        alone_debt = re.match(r'^\s*' + _COUNT + r'\s*$', line)
+        alone_noise = re.match(r'^\s*' + _NOISE, line)
         key = re.match(_KEY, line)
-        if inline:
-            out[inline.group(1) or inline.group(2)] = int(inline.group(3))
-            pending = None
-        elif alone:
-            pending = int(alone.group(1))
-        elif key and pending is not None:
-            out[key.group(1) or key.group(2)] = pending
-            pending = None
+        if inline_debt:
+            comments += 1
+            debt[_name(inline_debt)] = int(inline_debt.group(len(inline_debt.groups())))
+            pending_debt = pending_noise = None
+        elif inline_noise:
+            noise[_name(inline_noise)] = inline_noise.group(len(inline_noise.groups()))
+            pending_debt = pending_noise = None
+        elif alone_debt:
+            comments += 1
+            pending_debt, pending_noise = int(alone_debt.group(1)), None
+        elif alone_noise:
+            pending_noise, pending_debt = alone_noise.group(1), None
+        elif pending_noise is not None and _ITEMS.match(line):
+            for name in re.findall(r'"([\w/@.-]+)"', line):
+                noise[name] = pending_noise
+            pending_noise = None
+        elif key and pending_debt is not None:
+            debt[_name(key)] = pending_debt
+            pending_debt = None
+        elif key and pending_noise is not None:
+            noise[_name(key)] = pending_noise
+            pending_noise = None
         elif line.strip() and not line.strip().startswith(("#", "//")):
-            pending = None
-    return out
+            pending_debt = pending_noise = None
+    return debt, noise, comments - len(debt)
+
+
+def debt_entries(text: str) -> dict[str, int]:
+    return entries(text)[0]
 
 
 def shrink(args: argparse.Namespace) -> int:
     base_path = Path(args.base)
-    base = debt_entries(base_path.read_text(encoding="utf-8-sig")) if base_path.exists() else {}
-    head = debt_entries(Path(args.config).read_text(encoding="utf-8-sig"))
+    base, base_noise, _ = entries(base_path.read_text(encoding="utf-8-sig")) if base_path.exists() else ({}, {}, 0)
+    head, head_noise, unread = entries(Path(args.config).read_text(encoding="utf-8-sig"))
+    if unread:
+        # A debt comment no entry follows: a form this script does not read, which would pass any growth.
+        print(f"{unread} `debt:` comments are tied to no entry: shrink cannot read this config's form")
+        return 1
+    plan = Path(args.plan).read_text(encoding="utf-8-sig") if args.plan else ""
+    bad = []
+    for name, reason in head_noise.items():
+        if name in base_noise or not base:
+            continue
+        cited = _DECISION.findall(reason)
+        if not cited or not all(re.search(rf"\b{re.escape(c)}\b", plan) for c in cited):
+            bad.append(f"new noise entry: {name} ({reason}): a rule off for good is a decision; "
+                       "cite its id (Dn, ADR-n) in the reason, recorded in the plan (--plan)")
     if not base:
         # The change that brings the first debt list has nothing to shrink against.
         print(f"the base has no debt list: this change brings the first one, "
-              f"{len(head)} entries ({sum(head.values())} sites)")
+              f"{len(head)} entries ({sum(head.values())} sites), {len(head_noise)} noise")
         return 0
-    bad = [f"new debt entry: {r} ({n})" for r, n in head.items() if r not in base]
+    bad += [f"new debt entry: {r} ({n})" for r, n in head.items() if r not in base]
     bad += [f"debt grew: {r} {base[r]} -> {n}" for r, n in head.items() if r in base and n > base[r]]
     for line in bad:
         print(line)
@@ -266,11 +370,16 @@ def shrink(args: argparse.Namespace) -> int:
 
 
 def main() -> int:
-    if len(sys.argv) >= 2 and sys.argv[1] == "shrink" and len(sys.argv) != 4:
-        print(__doc__)
-        return 0 if sys.argv[2:3] in (["-h"], ["--help"]) else 2
-    if len(sys.argv) == 4 and sys.argv[1] == "shrink":
-        return shrink(argparse.Namespace(base=sys.argv[2], config=sys.argv[3]))
+    if len(sys.argv) >= 2 and sys.argv[1] == "shrink":
+        rest = sys.argv[2:]
+        plan = None
+        if "--plan" in rest:
+            i = rest.index("--plan")
+            plan, rest = (rest[i + 1] if i + 1 < len(rest) else None), rest[:i] + rest[i + 2:]
+        if len(rest) != 2 or (sys.argv[2:3] and sys.argv[2] in ("-h", "--help")):
+            print(__doc__)
+            return 0 if sys.argv[2:3] in (["-h"], ["--help"]) else 2
+        return shrink(argparse.Namespace(base=rest[0], config=rest[1], plan=plan))
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="tool", required=True)
     o = sub.add_parser("oxlint")
@@ -287,6 +396,13 @@ def main() -> int:
     g.add_argument("--noise")
     g.add_argument("--plan")
     g.add_argument("--by-id")
+    for name in ("ruff", "mypy"):
+        s = sub.add_parser(name)
+        s.add_argument("--sites", nargs="+", required=True)
+        s.add_argument("--noise")
+        s.add_argument("--plan")
+        if name == "mypy":
+            s.add_argument("--enabled", help="the codes of enable_error_code, comma-separated")
     c = sub.add_parser("clippy")
     c.add_argument("--help-list", required=True)
     c.add_argument("--sites", nargs="+", required=True)
@@ -295,7 +411,7 @@ def main() -> int:
     c.add_argument("--noise")
     c.add_argument("--plan")
     args = ap.parse_args()
-    return {"oxlint": oxlint, "clippy": clippy, "golangci": golangci}[args.tool](args)
+    return {"oxlint": oxlint, "clippy": clippy, "golangci": golangci, "ruff": ruff, "mypy": mypy}[args.tool](args)
 
 
 if __name__ == "__main__":

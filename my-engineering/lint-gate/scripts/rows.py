@@ -20,6 +20,7 @@ verdict is one of:
   decision — <Dn>           waiting on a decision of the plan
   n/a — <why>               the repo has nothing it applies to
   out — <why>               a row of a "Do not turn on" table, kept off
+  not measured — <why>      a knob whose measure needs what the run lacks
 
 `check` reports the rows with no line, the lines with no valid verdict, and
 the lines that name a row no reference has (a reference changed).
@@ -38,7 +39,7 @@ from pathlib import Path
 
 _SEP = re.compile(r"^\|[\s|:-]+\|\s*$")
 _VERDICT = re.compile(
-    r"^(on|open|on — .+|open — .+|sites \d[\d,]*.*|phase \d+.*|closed by .+|decision — .+|n/a — .+|out — .+)$"
+    r"^(on|open|on — .+|open — .+|sites \d[\d,]*.*|phase \d+.*|closed by .+|decision — .+|n/a — .+|out — .+|not measured — .+)$"
 )
 
 
@@ -131,7 +132,7 @@ def main() -> int:
         return keys(sys.argv[2:])
     if len(sys.argv) < 3 or sys.argv[1] not in ("list", "check"):
         print(__doc__, file=sys.stderr)
-        return 2
+        return 0 if sys.argv[1:2] in (["-h"], ["--help"]) else 2
     if sys.argv[1] == "list":
         print("| Row | Verdict |\n|---|---|")
         for ref in sys.argv[2:]:

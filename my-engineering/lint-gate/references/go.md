@@ -102,7 +102,7 @@ No `exclusions.presets`: each preset hides a class of findings (unchecked errors
 | Lint | `golangci-lint run` |
 | Module file tidy | `go mod tidy -diff` |
 | Vulnerable dependency | `govulncheck ./...`: its result depends on the Go toolchain that runs it as much as on the code (measured: 15 standard-library findings at one patch release, all fixed by a later one), so the toolchain is pinned |
-| Unreachable code | `deadcode ./...` (golang.org/x/tools) |
+| Unreachable code | `deadcode ./...` (golang.org/x/tools); it exits 0 when it reports, so the gate fails on any output: `test -z "$(deadcode ./...)"` |
 | Leftovers | `godox` (on with `default: all`) |
 | Tests | `go test -race -count=1 -shuffle=on ./...` |
 | Coverage of the diff | `go test -coverprofile` and a diff-coverage tool |
@@ -119,12 +119,14 @@ python tally.py golangci gl.json --scope-depth 2
 - `max-issues-per-linter: 0`, `max-same-issues: 0` and `uniq-by-line: false` must be in the draft: the defaults (50 per linter, 3 of the same text, one issue per line) cut the count, and the run still looks complete (measured: 459 sites with `uniq-by-line` at its default, 543 without).
 - A draft outside the repo sets `run.relative-path-mode: wd`, or the paths come out relative to the draft's folder and `--scope-depth` groups them wrongly.
 - A 0 is evidence when the run read every file: `go list -f '{{len .GoFiles}} {{len .TestGoFiles}} {{len .XTestGoFiles}}' ./...` summed against `git ls-files '*.go' | wc -l`.
-- The debt list: `debt.py golangci --sites <tally.json>... [--noise noise.json] --by-id gosec,gocritic` prints the `disable` block, and `debt.py shrink` reads its list items. A linter in `disable` is off whole, so its checks with no site go unenforced: `--by-id` keeps gosec and gocritic on and lists only their check ids with sites (`settings.gosec.excludes`, `settings.gocritic.disabled-checks`). revive has no list form: it stays in `disable` while any of its rules has sites. A linter off whole cannot flip per scope; it flips once, in the slice that removes its last site.
+- The debt list: `debt.py golangci --sites <tally.json>... [--noise noise.json] --by-id gosec,gocritic` prints the `disable` block, and `debt.py shrink` reads its list items. A linter in `disable` is off whole, so its checks with no site go unenforced: `--by-id` keeps gosec and gocritic on and lists only their check ids with sites (`settings.gosec.excludes`, `settings.gocritic.disabled-checks`). revive and govet have no list form `--by-id` writes: each stays in `disable` while any of its checks has sites (govet's `shadow`, say), which turns its other checks off for that window; the plan's first slice for it removes those sites. A linter off whole cannot flip per scope; it flips once, in the slice that removes its last site.
 - Measuring a linter of the debt list: `--enable-only <linter>` runs it with the config's settings and exclusions; `-E <linter>` does not turn on a linter that `disable` names.
 - A count can depend on which linters run beside it (measured: gosec G703 at 6 with the whole debt list, 5 alone): confirm a 0 with the full set.
 - The nesting curve: `tally.py curve golangci <run at min-complexity 1> --rule nestif`. nestif reports a block from `min-complexity` on, so the curve's count over L is what a run at L + 1 reports.
 - `tally.py` counts staticcheck and gosec per check id (`staticcheck:SA1019`, `gosec:G104`) and revive and gocritic per rule (`revive:argument-limit`), so one linter can be split across phases.
 - A `typecheck` finding means the package did not compile and was not linted: `tally.py` warns.
+- The test column is a floor for the linters the config excludes in `_test.go` (`err113`, `wrapcheck`): their test sites are not counted.
+- `go tool -modfile=...` builds the tool for the host OS: a CI matrix over platforms runs the lint on a runner per OS, or a prebuilt binary with `GOOS` set.
 - Test sites: by file name (`_test.go`). A `tally.py diff` of a run with `--tests=false` against the full run misplaces a production site that only shows when the tests are loaded (measured: three `gosec:G602` sites in `main.go`).
 - Suppressions to count: `//nolint`, `_ =` on a call that returns an error, `//go:build ignore`.
 - `--new-from-merge-base=<branch>` reports only the sites on changed lines. It holds the line during a transition; it is not the end state, which reports every site.

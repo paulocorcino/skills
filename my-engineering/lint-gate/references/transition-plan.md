@@ -1,6 +1,6 @@
 # Transition plan
 
-The shape of the plan step 5 writes. The plan is read cold by an agent that does not have this skill, so everything it needs is in the plan itself: commands, fix recipes, exception forms, done criteria. The scripts of the skill (`tally.py`, `drift.py`, `debt.py`) sit next to the plan, so its measure commands run as written.
+The shape of the plan step 5 writes. The plan is read cold by an agent that does not have this skill, so everything it needs is in the plan itself: commands, fix recipes, exception forms, done criteria. The scripts of the skill (`tally.py`, `drift.py`, `debt.py`, `rows.py`) sit next to the plan, so its measure commands run as written.
 
 Fill every section; a section with nothing to say holds `none — <why>`.
 

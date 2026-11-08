@@ -191,7 +191,8 @@ REGISTRY = {  # tool name in an `As of` line -> where its latest stable release 
     "oxlint": "npm:oxlint", "oxlint-tsgolint": "npm:oxlint-tsgolint", "typescript": "npm:typescript",
     "typescript-eslint": "npm:typescript-eslint", "eslint": "npm:eslint", "knip": "npm:knip",
     "jscpd": "npm:jscpd", "ruff": "pypi:ruff", "mypy": "pypi:mypy", "pyright": "pypi:pyright",
-    "vulture": "pypi:vulture", "ast-grep": "npm:@ast-grep/cli", "golangci-lint": "github:golangci/golangci-lint",
+    "vulture": "pypi:vulture", "ast-grep": "npm:@ast-grep/cli", "deptry": "pypi:deptry",
+    "pip-audit": "pypi:pip-audit", "complexipy": "pypi:complexipy", "golangci-lint": "github:golangci/golangci-lint",
     "Rust": "github:rust-lang/rust", "clippy": None,  # clippy ships with Rust
 }
 _ASOF = re.compile(r"^As of (\d{4}-\d{2}-\d{2}): (.*?\.)(?:\s|$)", re.M)

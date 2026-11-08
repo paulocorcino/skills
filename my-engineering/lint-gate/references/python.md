@@ -1,12 +1,12 @@
 # Python target
 
-As of 2026-11-07: ruff 0.17.4, mypy 2.4.1. `select = ["ALL"]` takes in every new rule at each ruff upgrade, so the version is pinned and a bump is its own commit, re-measured.
+As of 2026-11-08: ruff 0.17.4, mypy 2.4.1, vulture 2.16, deptry 0.25.1, pip-audit 2.10.1, complexipy 8.3.0. `select = ["ALL"]` takes in every new rule at each ruff upgrade, so the version is pinned and a bump is its own commit, re-measured.
 
 ## Ruff (`pyproject.toml` `[tool.ruff]`, or `ruff.toml`)
 
 ```toml
 line-length = 100
-target-version = "py312"               # the floor of requires-python
+target-version = "py312"               # the floor of requires-python; with none, the version the deploy runs (a Dockerfile, CI)
 
 [lint]
 select = ["ALL"]
@@ -54,7 +54,7 @@ disallow_any_unimported = true
 enable_error_code = ignore-without-code, redundant-expr, truthy-bool, truthy-iterable, possibly-undefined, unused-awaitable, explicit-override, mutable-override, deprecated, redundant-self
 ```
 
-An unknown error code fails the config: check the list against the pinned mypy.
+An unknown error code fails the config: check the list against the pinned mypy. `disable_error_code` does not turn off a code that `enable_error_code` names (mypy 2.4.1, measured): a code with debt leaves `enable_error_code` until its phase (`debt.py mypy --enabled <the list>` names them).
 
 pyright: `"typeCheckingMode": "strict"`, plus `reportUnnecessaryTypeIgnoreComment`, `reportImplicitOverride`, `reportUninitializedInstanceVariable` and `reportImportCycles` at `"error"`.
 
@@ -78,8 +78,12 @@ pyright: `"typeCheckingMode": "strict"`, plus `reportUnnecessaryTypeIgnoreCommen
 
 ## Measure
 
+- **The debt list**: `debt.py ruff --sites <ruff tally>` prints the `ignore` array and `debt.py mypy --sites <mypy tally>` the `disable_error_code` list, each entry under its `debt:` comment; `debt.py shrink` reads both.
 - **Ruff**: `ruff check --config <scratch>/ruff.toml --output-format json --no-cache . > ruff.json`. `--config` with a file replaces the repo's settings, so the draft holds every setting, `extend-exclude` included.
-- **mypy**: `mypy --config-file <scratch>/mypy.ini -O json <packages>`. **pyright**: `pyright -p <scratch>/pyrightconfig.json --outputjson`; paths in a pyright config are relative to the config file, so the draft names the repo's paths absolutely.
+- **mypy**: `mypy --config-file <scratch>/mypy.ini -O json <packages>`, run by the interpreter that has the project's dependencies (`--python-executable <venv>/python` when mypy lives elsewhere), or every import is `Any` and the count drops. **pyright**: `pyright -p <scratch>/pyrightconfig.json --outputjson`; paths in a pyright config are relative to the config file, so the draft names the repo's paths absolutely.
+- **Nesting depth**: ruff's only depth rule (`PLR1702`) is a preview rule, out of a pinned gate: the knob is `n/a` for Python unless the repo runs preview, and complexity carries nesting.
+- **deptry** reads only what it finds as the project's code: pass the test folders too, or their imports are not checked (measured: 12 of 34 files read).
+- complexipy, deptry and pip-audit have no `tally.py` format: their counts come from their own JSON (`--output json`, `-o`, `-f json`), recorded with the command.
 - Test sites: run with `tests/` excluded and with it included, then `tally.py diff`, or read the scope column with `--scope-depth`.
 - Suppressions to count: `# noqa`, `# type: ignore`, `# pyright: ignore`, `# pragma: no cover`, `typing.cast(`, `Any`.
 

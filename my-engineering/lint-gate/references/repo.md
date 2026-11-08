@@ -83,7 +83,8 @@ python tally.py curve jscpd <scratch>/jscpd-report.json --rule jscpd:<language> 
 
 - jscpd reads the repo's `.jscpd.json` even with flags on the command line: its ignore list holds, and each flag replaces only its own setting. `--min-tokens` alone keeps the file's `minLines`: pass both sizes.
 - The `curve` is an estimate from one run at the lowest size; the count at the chosen size comes from a run at that size (measured: the curve gave 186 clones at 50 tokens, a run at 50/5 gave 225).
-- jscpd names each file from the folder it scanned: `--prefix` puts that folder back, so the paths match the other tools.
+- jscpd 4.x names each file from the folder it scanned, and `--prefix` puts that folder back; jscpd 5.x names files from the repo root already, and `--prefix` then breaks them. Check one path of the report before tallying.
+- jscpd reads code blocks in Markdown: the plan's target configs and the copied scripts would count as clones. Ignore both, with the reason.
 - A site is one clone: a block copied to three places is two clones.
 
 ## Exits
@@ -107,6 +108,8 @@ The ways to turn the gate green without fixing the code. Each one is `closed by 
 | A row of a reference that the lint gate run skipped | `rows.py check` on the plan |
 | An `ast-grep-ignore` with no rule id, or on the first line of a file | the ratchet at 0 on ignores without a rule id and a reason (§ ast-grep) |
 | A force push to the default branch that drops the base commit: `shrink` against an empty base passes | branch protection on the default branch (no force push); a pull request compares with its merge base |
+| The skill's own artifacts in the repo (the copied scripts, the plan's code blocks) counted or linted as the repo's code | excluded from the linters and jscpd by path, with the reason, and named in the plan |
+| A new `noise:` entry in a debt list: a debt rule off "for good" | `debt.py shrink` fails unless the reason cites a decision id the plan records |
 | A fake reason on an exception | open: a ratchet counts the exceptions, and a human reads each new one |
 
 ## Agent docs
@@ -146,7 +149,7 @@ Step 5 installs it once approved, for either reason.
 
 ## Where the tools look
 
-- A Windows checkout with `core.autocrlf` has CRLF files in the working tree: shellcheck, the formatters and yamllint report every line until the line endings are fixed (`.gitattributes`). Measure them on an LF copy (`git archive` of the commit) until then.
+- A Windows checkout with `core.autocrlf` has CRLF files in the working tree: shellcheck, the formatters and yamllint report every line until the line endings are fixed (`.gitattributes`). Measure them on an LF copy until then: `git -c core.autocrlf=false archive HEAD | tar -x -C <scratch>/lf` (a plain `git archive` on Windows writes CRLF too).
 
 A linter run over a folder reads every file in it, tracked or not. An agent's own folders (`.claude/`, `.agents/`, `.codex/`, `.cursor/` and the like) hold installed skills, hooks and, in some setups, whole worktrees of the repo: a run over them counts another copy of the code, or code the repo does not own. Measure over the tracked files (`git ls-files` feeds the paths), or put each such folder in the tool's ignore list; the folders the repo tracks as its own source stay in.
 

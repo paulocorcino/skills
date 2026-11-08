@@ -2,7 +2,7 @@
 
 The template of the repo's own `docs/ast-grep.md` (or the repo's folder for docs), written by step 5 when ast-grep is approved, for navigation or for gate rules. With no gate rule yet, the section "The gate's rules" stays out until the first one. The agent of the repo reads it through one pointer line in the agent doc's tools section (`agent-docs.md` § The tools section).
 
-Before filling it, read the docs of the pinned version that ast-grep writes for agents: `https://ast-grep.github.io/llms.txt` (an index; fetch the one `.md` page needed) and the agent skill it publishes (`ast-grep/agent-skill`: `ast-grep` for rules, `outline` for navigation). The guide holds what those docs do not: this repo's commands, rules and exception form, and the traps measured here. It points at them for the rest. Fill each `<...>`; write it in the language of the repo's docs; run every command in it once on this repo, and drop a line whose command does not run here (`outline` is alpha: check it at the pin).
+Before filling it, read the docs that ast-grep writes for agents (served for the latest release; note any difference with the pin): `https://ast-grep.github.io/llms.txt` (an index; fetch the one `.md` page needed) and the agent skill it publishes (`ast-grep/agent-skill`: `ast-grep` for rules, `outline` for navigation). The guide holds what those docs do not: this repo's commands, rules and exception form, and the traps measured here. It points at them for the rest. Fill each `<...>`; write it in the language of the repo's docs; run every command in it once on this repo, and drop a line whose command does not run here (`outline` is alpha: check it at the pin).
 
 As of 2026-11-08: ast-grep 0.51.1.
 
@@ -33,6 +33,7 @@ A pattern that matches nothing is not proof the code is absent:
 - A path is part of the pattern: `Command::new($P)` does not match `std::process::Command::new(...)`. Write the path as a metavariable (`$C::new($P)`) and read the matches.
 - <Rust:> a pattern does not match inside a macro's arguments (`assert_eq!(x.unwrap(), 1)`). Search those with grep.
 - <Go:> a call to a package function is parsed as a type conversion when it stands alone: `os.Exit($C)` matches nothing. Wrap it in a function and select the call: `-p 'func _() { os.Exit($C) }' --selector call_expression`. A method call (`$X.Close()`) matches as written.
+- <Python:> a pattern is one expression or one statement; a block statement with its body (`for $X in $Y: $$$`) does not parse as written: match the header with `--selector` or use a rule with `kind`.
 - `--debug-query=pattern` prints how ast-grep parsed the pattern; test it on a snippet you know contains the code.
 
 ## Rewrite
