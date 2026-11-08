@@ -25,9 +25,9 @@ Run the extractor's `probe` subcommand under the read-only rule (step 4 says whe
 
 ## 4. Extract and carve
 
-Introspection is mechanical — script it. The tool is `db-schema/tools/extract_<source-dialect>.py`, a **living tool** this skill ships as versioned references in its `scripts/` folder. **The references are read-only during an adoption:** the run evolves the repo copy alone, and a reference changes only in maintenance outside any adoption run. Before extracting, sync versions name-to-name — compare `__version__` in the repo copy against the skill's reference:
+Introspection is mechanical — script it. The tool is `db-schema/tools/extract_<source-dialect>.py`, a **living tool** this skill ships as versioned references in its `scripts/` folder. **Germline and soma:** the reference is the germline, read-only during an adoption; the repo copy is the soma, which mutates to fit this engine and this database. A mutation that proved itself is a harvest candidate, and only maintenance, outside any adoption run, carries it into the germline. Before extracting, sync versions name-to-name — compare `__version__` in the repo copy against the skill's reference:
 
-- no repo copy yet → copy the matching reference into `db-schema/tools/`; when no reference covers this engine, the port is yours to build — by trial and error against the live database, before any extraction: read [`PORTING.md`](PORTING.md)
+- no repo copy yet → copy the matching reference into `db-schema/tools/`; when no reference covers this engine, the port is yours to build by **reconcile-driven porting**, before any extraction: read [`PORTING.md`](PORTING.md)
 - repo copy **newer** → keep using the repo copy
 - skill reference **newer** → upgrade the repo copy, reading the changelog for what changed
 - equal → compare content too (a byte diff is enough): identical → proceed; different → someone changed the repo copy without bumping — diff it, bump the repo copy's version, and proceed with it

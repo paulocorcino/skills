@@ -55,7 +55,7 @@ Two optional extras it can set up:
 - **[anti-slop](https://github.com/dmmulroy/anti-slop)** rules for TypeScript, curated one by one: the casts and `unknown` widening that agents use to make code compile.
 - **[ast-grep](https://ast-grep.github.io/)** for the agent's toolbox. In an end-to-end test (n=3 per arm), an agent with ast-grep installed but untaught never touched it. With a one-page guide and a pointer in `AGENTS.md`, it outlined large files instead of reading them whole, and finished the same task, with the same accuracy, at **half the cost**.
 
-The target is a dated cache, not a memory. Before each run the skill checks every tool against its registry and against the tool's own rule list, so a new release doesn't leave it recommending last year's linters.
+Its references are a germline no run changes: your repo's configs and its copy of the scripts are the soma, and what proves itself there comes back through maintenance. The target is a dated cache, not a memory. Before each run the skill checks every tool against its registry and against the tool's own rule list, so a new release doesn't leave it recommending last year's linters.
 
 Try it with: *"Audit this repo's linters and tighten them."*
 

@@ -75,7 +75,7 @@ DDL waits until you confirm the model is ready. Try it with: *"Let's model the d
 - **Numbers, never values.** Live queries return counts and shapes. Sampled values stay out of every file and message.
 - **Coverage is computed, not claimed.** `reconcile` compares the live catalog, the committed baseline and the carved files, and the adoption is done only when every object is carved or listed as an exception with its reason.
 - **It excavates the applications.** It traces every table into the code, and every money-like column back to the arithmetic that writes it. It flags home-made queues, dirty reads deciding a write and authorization checks with no server-side guard, and asks you where else a rule is computed: a spreadsheet, another system, a manual step.
-- **Any engine.** The skill ships one reference extractor, SQL Server, on purpose: for your engine it builds the port, by trial and error against your live database. It ports the connection and the read-only probe first, then sweeps every object class the engine supports, and carves and reconciles until the reconcile is green. A port that has only been written is a draft; one that reconciled your database is a tool, and it lives in your repo.
+- **Any engine, by reconcile-driven porting.** The skill ships one reference extractor, SQL Server, on purpose: for your engine it builds the port the way test-driven code is built, with your live database as the test and `reconcile` as red or green. It ports the connection and the read-only probe first, then sweeps every object class the engine supports, and carves and reconciles until the reconcile is green. A port that has only been written is a draft; one that reconciled your database is a tool, and it lives in your repo.
 - **Every finding is a candidate, sized.** A relation the code implies arrives at the grill as "violated by N rows", because declaring a foreign key over zero orphans and over thousands of them are different decisions.
 
 Try it with: *"Adopt our production SQL Server database into this repo."*
@@ -99,6 +99,10 @@ It starts from what the engine already records about its own spending (Query Sto
 - **One top recommendation**, then a card per finding with its numbers, location, risk and route. It changes nothing in the database; a proposed performance fix is proven on a copy before it becomes a ticket.
 
 Start it by name: `/database-audit`.
+
+## Germline and soma
+
+The tools these skills ship (the scaffold, the extractor, the measurement tool) are the **germline**: no run ever changes them. The copy in your repo is the **soma**: it mutates freely to fit your engine and your database. A mutation that proved itself in a run comes back as a harvest candidate, and only a maintainer, outside any run, selects it into the germline. Your repo gets a tool shaped for it, and the next repo gets the improvements that survived.
 
 ---
 

@@ -54,7 +54,7 @@ Read `references/repo.md` and `references/<stack>.md` for each stack present.
 - a deprecated name: its successor;
 - an added rule: into the draft when it belongs to a class (§ Rule classes), measured like the rest; one with no class stays out, listed.
 
-Each drift found, from `diff`, `check` or the research, is a line of `<scratch>/reference-drift.md` in the form of `references/maintenance.md`. The run leaves the skill's own files as they are: the report points at that file, and maintenance applies it.
+Each drift found, from `diff`, `check` or the research, is a line of `<scratch>/reference-drift.md` in the form of `references/maintenance.md`. **Germline and soma:** the skill's references and scripts are the germline, read-only in every run; the repo's configs and the plan's copy of the scripts are the soma, which fits this repo. The report points at the harvest file, and maintenance carries what proved itself into the germline.
 
 Write each target config as a _draft_ in a scratch directory outside the repo, run the tool over the repo with the draft and machine-readable output, and tally it:
 

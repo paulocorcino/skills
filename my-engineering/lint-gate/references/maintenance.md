@@ -1,6 +1,6 @@
 # Maintenance
 
-The references are a cache of what the tools are today. They go stale three ways: a rule is renamed or removed (`drift.py diff` and `check` find it), a default or a recommendation changes (only the release notes say so), or a better tool appears for a property (nothing in the old tool's output says so). The research covers the last two; maintenance applies what a run found.
+The references are a cache of what the tools are today. They go stale three ways: a rule is renamed or removed (`drift.py diff` and `check` find it), a default or a recommendation changes (only the release notes say so), or a better tool appears for a property (nothing in the old tool's output says so). The research covers the last two; maintenance applies what a run found. In the skill's terms the references are the germline and a repo's copy the soma: a run mutates only the soma, and maintenance is the one selection back into the germline.
 
 ## Research
 

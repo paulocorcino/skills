@@ -12,7 +12,7 @@ Bring the repo back in line with the adopted live database. One direction only: 
 
 ## 1. Tool version check
 
-Sync tool versions per `database-adoption` step 4: compare `__version__` of the repo copy against the reference in that skill's `scripts/`. The references stay read-only — the run upgrades or bumps only the repo copy, and a repo copy ahead of the reference is reported as a harvest candidate in step 6. Done when the repo copy is at least the reference's version.
+Sync tool versions per `database-adoption` step 4: compare `__version__` of the repo copy against the reference in that skill's `scripts/`. The references are the germline and stay read-only; the repo copy is the soma, the only one the run upgrades or bumps, and a repo copy ahead of the reference is reported as a harvest candidate in step 6. Done when the repo copy is at least the reference's version.
 
 ## 2. Probe
 

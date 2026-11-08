@@ -4,7 +4,7 @@ description: Install the db-schema governance method (kit, model-docs home, agen
 disable-model-invocation: true
 ---
 
-Install the schema method this skill travels with: desired state declared in plain SQL, domain documented as source, validation mechanical. The `scaffold/` folder beside this file is the versioned reference of the whole method — copy it, wire it, prove it green. **The scaffold is read-only during a run:** the run writes only to the target repo, and `scaffold/` changes only in maintenance outside any run. What the scaffold deliberately leaves out matters as much as what it holds.
+Install the schema method this skill travels with: desired state declared in plain SQL, domain documented as source, validation mechanical. The `scaffold/` folder beside this file is the versioned reference of the whole method — copy it, wire it, prove it green. **Germline and soma:** the scaffold is the germline, read-only during a run; the copy in the target repo is the soma, which the repo grows from there. `scaffold/` changes only in maintenance outside any run, from what a repo's copy proved. What the scaffold deliberately leaves out matters as much as what it holds.
 
 ## 1. Preflight
 
