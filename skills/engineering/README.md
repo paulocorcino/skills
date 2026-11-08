@@ -23,6 +23,8 @@ staged-plan cuts a large track into 3–7 stages, each executed by a subagent wi
 - **Every stage carries its checks.** Each check is one claim with a concrete value ("POST /tasks with an empty title returns 422"), proved by one named test or command. A claim with no nameable proof is too vague to write, so the planner asks instead of guessing.
 - **Every stage has a file list.** A subagent that needs a file outside its list stops and reports instead of wandering.
 - **The plan is the contract.** Anyone, human or agent, can open the markdown cold and run it correctly.
+- **Stages are cut by what they read.** Each one gets the files it needs and little else, and hands back a short report, so no stage inherits another's context and no handoff plays telephone.
+- **It knows when not to stage.** When the whole track fits one session, it recommends doing the work directly, without a plan: staging pays only when the work outgrows one context window.
 - **The skill only plans.** It investigates, designs, scaffolds the plan and its verify scripts, and stops. Execution follows the plan file.
 
 Try it with: *"Plan the migration from lib-a to lib-b as a staged plan."*
