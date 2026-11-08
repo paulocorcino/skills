@@ -75,6 +75,7 @@ DDL waits until you confirm the model is ready. Try it with: *"Let's model the d
 - **Numbers, never values.** Live queries return counts and shapes. Sampled values stay out of every file and message.
 - **Coverage is computed, not claimed.** `reconcile` compares the live catalog, the committed baseline and the carved files, and the adoption is done only when every object is carved or listed as an exception with its reason.
 - **It excavates the applications.** It traces every table into the code, and every money-like column back to the arithmetic that writes it. It flags home-made queues, dirty reads deciding a write and authorization checks with no server-side guard, and asks you where else a rule is computed: a spreadsheet, another system, a manual step.
+- **Any engine.** The skill ships one reference extractor, SQL Server, on purpose: for your engine it builds the port, by trial and error against your live database. It ports the connection and the read-only probe first, then sweeps every object class the engine supports, and carves and reconciles until the reconcile is green. A port that has only been written is a draft; one that reconciled your database is a tool, and it lives in your repo.
 - **Every finding is a candidate, sized.** A relation the code implies arrives at the grill as "violated by N rows", because declaring a foreign key over zero orphans and over thousands of them are different decisions.
 
 Try it with: *"Adopt our production SQL Server database into this repo."*
@@ -90,7 +91,7 @@ Try it with: *"Did the database change since the adoption?"*
 
 ## database-audit: follow the cost
 
-It starts from what the engine already records about its own spending (Query Store, `pg_stat_statements` and kin), takes the costliest statements and traces each one to the code that issues it. That can be a routine, an ORM call, or a loop repeating a query.
+It starts from what the engine already records about its own spending (Query Store, `pg_stat_statements` and kin), takes the costliest statements and traces each one to the code that issues it. That can be a routine, an ORM call, or a loop repeating a query. On an engine with no reference tool, it first builds its own measurement tool from that engine's cost sources, against your database.
 
 - **Every finding names its evidence:** measured, structural or speculative. A speculative performance finding is never High.
 - **Amplification as ratios.** Rows read per row returned, bytes written per row changed, space per byte of live data, before and after.
@@ -112,7 +113,7 @@ cp -r skills/database/database-* ~/.claude/skills/
 
 `database-setup` and `database-audit` run only when you call them by name (`/database-setup`, `/database-audit`); the others also start when your request matches them.
 
-Requirements: Python 3.11+ and `git`. The live-database tools ship ready for **SQL Server** (`extract_tsql.py`, `measure_tsql.py`). For another engine, the skill builds the port against your database, guided by its porting notes, and the result stays in your repo.
+Requirements: Python 3.11+ and `git`. The live-database tools come as references for SQL Server (`extract_tsql.py`, `measure_tsql.py`); for any other engine, adoption and audit build the tool for it as part of the run, and it stays in your repo.
 
 ## Feedback
 
