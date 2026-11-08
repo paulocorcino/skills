@@ -95,11 +95,11 @@ Done when no rule with sites is left without all three.
 
 ### 5. Flip zero debt
 
-On a branch of its own: pin each unpinned tool, set every 0-site rule to error in the real config, raise each `warn` whose count is 0 to error, and add each missing tool with 0 findings to the local gate and to CI. An approved ast-grep goes in pinned (`references/repo.md` § ast-grep); with gate rules, their tests join it, the rules at 0 sites at `error`, the others in the plan. It also brings the agent's guide, from `references/ast-grep-guide.md`, checked against ast-grep's own docs for agents at the pin, with each command in it run once on this repo. A repo with no single gate command gets it as Phase 0 of the plan; this step then edits only the configs.
+On a branch of its own: pin each unpinned tool, set every 0-site rule to error in the real config, raise each `warn` whose count is 0 to error, and add each missing tool with 0 findings to the local gate and to CI: a tool the stack's own lockfile installs (a dev dependency, a Go tools module) goes in now; one that needs a binary download checked by checksum goes to Phase 0. An approved ast-grep goes in pinned (`references/repo.md` § ast-grep); with gate rules, their tests join it, the rules at 0 sites at `error`, the others in the plan. It also brings the agent's guide, from `references/ast-grep-guide.md`, checked against ast-grep's own docs for agents at the pin, with each command in it run once on this repo. A repo with no single gate command gets it as Phase 0 of the plan; this step then adds its checks to the configs and to CI, and the agent doc names the CI steps to run until the command exists.
 
 - **A group goes on with its debt list.** For a lint group or category (`pedantic`, `rust_2018_idioms`, an oxlint category, a new plugin), `scripts/debt.py` prints the block: the group on, and each rule with sites off under a `debt: N sites` comment, each noise rule under `noise: <reason>`. Paste the block as printed. A new plugin also brings its rules of the categories already on; `debt.py` counts them.
 - **The list only shrinks.** Add `debt.py shrink` against the base branch to the gate and to CI, for every config that holds a debt list. On the change that brings the first list the base has none, and `shrink` passes.
-- **The edit keeps the file as the repo writes it**: its line endings, and every comment on its own line (a repo's own reader of the config may strip only whole-line comments).
+- **The edit keeps the file as the repo writes it**: its line endings, and each `debt:` and `noise:` comment on its own line (a repo's own reader of the config may strip only whole-line comments; `debt.py shrink` reads both forms).
 - **A gate property that contradicts an accepted decision** (an ADR, a documented convention) is not flipped: it goes to the plan as a `decision`, with the decision it would amend.
 
 Run the whole gate. A rule that turns it red was mis-measured: revert that rule, measure it again, and classify it.
@@ -125,10 +125,10 @@ The numeric limits and the optional families: the part of the target the develop
 | Knob | Reference | Curve |
 |---|---|---|
 | Function complexity | 10 | `curve` of the complexity rule of each stack, run at limit 1 |
-| Nesting depth | 3 | the count of the depth rule at 2, 3 and 4 |
+| Nesting depth | 3 (Go: revive `max-control-nesting`; nestif scores blocks apart) | the count of the depth rule at 2, 3 and 4 |
 | Arguments | 5 (Rust, Python, Go), 4 (TypeScript) | `curve` of the argument rule, run at limit 0 |
 | File size | 500 non-blank lines | `sizes` |
-| Line width | 100 | `sizes` |
+| Line width | 100; not asked for Go, where gofmt owns layout | `sizes` |
 | Clone size | 50 tokens and 5 lines (`minTokens`, `minLines` of jscpd) | `curve` of the jscpd run at `--min-tokens 30` |
 | Inline test block | no reference | a count of test blocks per size |
 | Coverage of the diff | no reference | the coverage tool's report on the last changes, or `not measured — <why>` when it needs a toolchain change |

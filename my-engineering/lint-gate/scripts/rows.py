@@ -9,7 +9,7 @@ makes the skip fail.
   rows.py check PLAN REF...     # fails when a row has no verdict in PLAN
   rows.py keys REF... --in FILE...   # the target config keys no FILE names
 
-The plan carries a `## Coverage` section with a table `| Row | Verdict |`. A
+The plan carries a `## Coverage` (or `### Coverage`) section with a table `| Row | Verdict |`. A
 verdict is one of:
 
   on                        the check runs in the gate today (`on — <note>` too)
@@ -72,7 +72,7 @@ def rows_of(path: Path) -> list[str]:
 
 def coverage(plan: Path) -> dict[str, str]:
     text = plan.read_text(encoding="utf-8-sig")
-    m = re.search(r"^## Coverage\s*$(.*?)(?=^## |\Z)", text, re.M | re.S)
+    m = re.search(r"^#{2,3} Coverage\s*$(.*?)(?=^#{1,3} |\Z)", text, re.M | re.S)
     if not m:
         return {}
     got: dict[str, str] = {}

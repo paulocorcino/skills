@@ -90,9 +90,9 @@ def list_tsc(text: str) -> Rules:
 def list_golangci(text: str) -> Rules:
     out = {}
     for line in text.splitlines():
-        m = re.match(r"^([a-z0-9_]+): (.*)$", line)
+        m = re.match(r"^([a-z0-9_]+)( \[deprecated\])?: (.*)$", line)
         if m:
-            out[m.group(1)] = "deprecated" if "deprecated" in m.group(2).lower() else "stable"
+            out[m.group(1)] = "deprecated" if m.group(2) or "deprecated" in m.group(3).lower() else "stable"
     return out
 
 
@@ -134,6 +134,23 @@ def names_clippy(text: str) -> list[str]:
 
 def names_tsc(text: str) -> list[str]:
     return list((jsonc(text).get("compilerOptions") or {}).keys())
+
+
+def disabled_golangci(text: str) -> set[str]:
+    """The names under a `disable:` list: a deprecated linter belongs there, since
+    `default: all` turns deprecated linters on too."""
+    out, section = set(), None
+    for line in text.splitlines():
+        m = re.match(r"^\s{2,4}(enable|disable):\s*$", line)
+        if m:
+            section = m.group(1)
+            continue
+        if section and re.match(r"^\s{2,4}\S", line) and not line.strip().startswith(("-", "#")):
+            section = None
+        m = re.match(r"^\s+-\s+([a-z0-9_]+)\s*(#.*)?$", line)
+        if section == "disable" and m:
+            out.add(m.group(1))
+    return out
 
 
 def names_golangci(text: str) -> list[str]:
@@ -265,8 +282,12 @@ def main() -> int:
         print("warning: the tool's list is empty: check the command that printed it", file=sys.stderr)
         return 1
     bad = 0
-    for name in NAMES[fmt](read(b)):
+    draft = read(b)
+    disabled = disabled_golangci(draft) if fmt == "golangci" else set()
+    for name in NAMES[fmt](draft):
         status = known(fmt, name, rules)
+        if status == "deprecated" and name in disabled:
+            continue  # off on purpose: `default: all` would turn it on
         if status is None:
             print(f"unknown: {name} (renamed or removed: find it in the changelog)")
             bad += 1

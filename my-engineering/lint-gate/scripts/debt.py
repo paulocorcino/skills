@@ -9,6 +9,7 @@ the config where the comment says, keeping the file's line endings.
                  [--categories c,..] [--target r,..] [--noise NOISE.json] [--plan PATH]
   debt.py clippy --help-list HELP --sites SITES... --groups g,.. [--target l,..]
                  [--noise NOISE.json] [--plan PATH]
+  debt.py golangci --sites SITES... [--noise NOISE.json] [--plan PATH] [--by-id gosec,gocritic]
   debt.py shrink BASE CONFIG    # fails when the debt list of CONFIG grew against BASE
 
 `shrink` is the check that keeps the list going one way: an entry that BASE does
@@ -34,6 +35,14 @@ or, for --target, by an `"error"` line.
 clippy: each group of --groups goes to `deny` with priority -1; each lint of the
 group with sites is `allow` under `# debt: N sites`. A --target lint with no site
 is `deny`; one with sites is not in the block: the plan turns it on.
+
+golangci: `default: all`, and each linter with sites goes in `disable` under
+`# debt: N sites` (a linter's sites are the sum of its check ids: `gosec:G104`,
+`revive:argument-limit`); a noise linter under `# noise: <reason>`. Merge the
+target's own `disable` lines (the deprecated names `default: all` would turn on)
+into the block. `--by-id` keeps a linter on and lists only its check ids with
+sites, under `settings: <linter>:` (`excludes` for gosec, `disabled-checks` for
+gocritic): its other checks stay enforced while the debt is paid.
 
 Every comment sits on its own line: some config readers strip only whole-line
 comments.
@@ -167,8 +176,52 @@ def clippy(args: argparse.Namespace) -> int:
     return 0
 
 
-_KEY = r'^\s*"?([\w/@.-]+)"?\s*[:=]'
+# A key (`"rule": ...`, `lint = ...`) or a YAML list item (`- linter`).
+_KEY = r'^\s*(?:-\s+"?([\w/@.-]+)"?(?=\s*(?:#|$))|"?([\w/@.-]+)"?\s*[:=])'
 _COUNT = r'(?:#|//)\s*debt:\s*(\d+) sites?'
+
+
+_BY_ID = {"gosec": "excludes", "gocritic": "disabled-checks"}
+
+
+def golangci(args: argparse.Namespace) -> int:
+    by_id = {x for x in (args.by_id or "").split(",") if x}
+    unknown = by_id - set(_BY_ID)
+    if unknown:
+        print(f"--by-id supports {', '.join(_BY_ID)}, not {', '.join(sorted(unknown))}", file=sys.stderr)
+        return 2
+    per_linter: dict[str, set[str]] = {}
+    per_id: dict[str, dict[str, set[str]]] = {}
+    for p in args.sites:
+        for rule, locs in json.loads(Path(p).read_text(encoding="utf-8")).items():
+            linter, _, check = rule.partition(":")
+            if linter in by_id and check:
+                per_id.setdefault(linter, {}).setdefault(check, set()).update(locs)
+            else:
+                per_linter.setdefault(linter, set()).update(locs)
+    noise = json.loads(Path(args.noise).read_text(encoding="utf-8")) if args.noise else {}
+    plan = args.plan or "the transition plan"
+    out = ["linters:", "  default: all",
+           f"  # The lint gate: every linter is on. A linter in `disable` is debt that {plan}",
+           "  # turns on (this list only shrinks), or noise, off for good with its reason.",
+           "  disable:"]
+    for name in sorted(noise):
+        out += [f"    # noise: {noise[name]}", f"    - {name}"]
+    debts = sorted(((len(v), k) for k, v in per_linter.items() if v and k not in noise), key=lambda x: (-x[0], x[1]))
+    for n, name in debts:
+        out += [f"    # debt: {plural(n)}", f"    - {name}"]
+    if per_id:
+        out += ["  settings:"]
+        for linter in sorted(per_id):
+            out += [f"    {linter}:", f"      {_BY_ID[linter]}:"]
+            ids = sorted(((len(v), k) for k, v in per_id[linter].items()), key=lambda x: (-x[0], x[1]))
+            out += [line for n, k in ids for line in (f"        # debt: {plural(n)}", f"        - {k}")]
+    print("\n".join(out))
+    for linter in sorted(per_id):
+        print(f"{linter}: on, {len(per_id[linter])} check ids in debt "
+              f"({sum(len(v) for v in per_id[linter].values())} sites)", file=sys.stderr)
+    print(f"{len(debts)} linters in debt ({sum(n for n, _ in debts)} sites), {len(noise)} noise", file=sys.stderr)
+    return 0
 
 
 def debt_entries(text: str) -> dict[str, int]:
@@ -181,12 +234,12 @@ def debt_entries(text: str) -> dict[str, int]:
         alone = re.match(r'^\s*' + _COUNT + r'\s*$', line)
         key = re.match(_KEY, line)
         if inline:
-            out[inline.group(1)] = int(inline.group(2))
+            out[inline.group(1) or inline.group(2)] = int(inline.group(3))
             pending = None
         elif alone:
             pending = int(alone.group(1))
         elif key and pending is not None:
-            out[key.group(1)] = pending
+            out[key.group(1) or key.group(2)] = pending
             pending = None
         elif line.strip() and not line.strip().startswith(("#", "//")):
             pending = None
@@ -213,6 +266,9 @@ def shrink(args: argparse.Namespace) -> int:
 
 
 def main() -> int:
+    if len(sys.argv) >= 2 and sys.argv[1] == "shrink" and len(sys.argv) != 4:
+        print(__doc__)
+        return 0 if sys.argv[2:3] in (["-h"], ["--help"]) else 2
     if len(sys.argv) == 4 and sys.argv[1] == "shrink":
         return shrink(argparse.Namespace(base=sys.argv[2], config=sys.argv[3]))
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -226,6 +282,11 @@ def main() -> int:
     o.add_argument("--target", default="")
     o.add_argument("--noise")
     o.add_argument("--plan")
+    g = sub.add_parser("golangci")
+    g.add_argument("--sites", nargs="+", required=True)
+    g.add_argument("--noise")
+    g.add_argument("--plan")
+    g.add_argument("--by-id")
     c = sub.add_parser("clippy")
     c.add_argument("--help-list", required=True)
     c.add_argument("--sites", nargs="+", required=True)
@@ -234,7 +295,7 @@ def main() -> int:
     c.add_argument("--noise")
     c.add_argument("--plan")
     args = ap.parse_args()
-    return oxlint(args) if args.tool == "oxlint" else clippy(args)
+    return {"oxlint": oxlint, "clippy": clippy, "golangci": golangci}[args.tool](args)
 
 
 if __name__ == "__main__":

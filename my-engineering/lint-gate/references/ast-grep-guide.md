@@ -16,7 +16,7 @@ ast-grep reads code as a syntax tree. `<sg>` runs it at the version the repo pin
 Before reading a whole source file, outline it, then read only the range you need:
 
     <sg> outline <file>                    # items and their members, with line numbers
-    <sg> outline <dir> --items exports     # the public surface of a folder
+    <sg> outline <dir> --items exports     # the public surface of a folder (Rust, TypeScript; in Go it lists every function)
     <sg> outline <file> --items imports    # what a file depends on
 
 ## Search by shape
@@ -32,6 +32,7 @@ A pattern that matches nothing is not proof the code is absent:
 
 - A path is part of the pattern: `Command::new($P)` does not match `std::process::Command::new(...)`. Write the path as a metavariable (`$C::new($P)`) and read the matches.
 - <Rust:> a pattern does not match inside a macro's arguments (`assert_eq!(x.unwrap(), 1)`). Search those with grep.
+- <Go:> a call to a package function is parsed as a type conversion when it stands alone: `os.Exit($C)` matches nothing. Wrap it in a function and select the call: `-p 'func _() { os.Exit($C) }' --selector call_expression`. A method call (`$X.Close()`) matches as written.
 - `--debug-query=pattern` prints how ast-grep parsed the pattern; test it on a snippet you know contains the code.
 
 ## Rewrite

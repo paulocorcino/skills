@@ -46,7 +46,7 @@ The checks that hold for every stack. Each row is measured like a lint rule: its
 | A vulnerable dependency | each stack's audit tool, osv-scanner for vendored code |
 | Static analysis | CodeQL |
 | An unsafe workflow | zizmor and actionlint; actions pinned by SHA; the smallest `permissions:` |
-| Dependency updates | Dependabot or Renovate, in groups |
+| Dependency updates | Dependabot or Renovate, in groups, with a cooldown before a new release is proposed (zizmor flags a Dependabot config without one) |
 
 ## Text and files
 
@@ -106,6 +106,7 @@ The ways to turn the gate green without fixing the code. Each one is `closed by 
 | A clone hidden by an ignore marker (`jscpd:ignore-start`) | a ratchet that counts the markers, each with its reason |
 | A row of a reference that the lint gate run skipped | `rows.py check` on the plan |
 | An `ast-grep-ignore` with no rule id, or on the first line of a file | the ratchet at 0 on ignores without a rule id and a reason (§ ast-grep) |
+| A force push to the default branch that drops the base commit: `shrink` against an empty base passes | branch protection on the default branch (no force push); a pull request compares with its merge base |
 | A fake reason on an exception | open: a ratchet counts the exceptions, and a human reads each new one |
 
 ## Agent docs
@@ -134,7 +135,7 @@ Two reasons to take it in, asked apart in step 3:
 
 Step 5 installs it once approved, for either reason.
 
-- **Install**: `@ast-grep/cli` from npm, `ast-grep-cli` from PyPI or `ast-grep` from crates.io, by the package manager the repo already has, at an exact version. It is 0.x: a minor release can change a rule's matches, so a bump is its own commit, re-measured.
+- **Install**: `@ast-grep/cli` from npm, `ast-grep-cli` from PyPI or `ast-grep` from crates.io, by the package manager the repo already has, at an exact version. A repo with none of them (a Go module, say) runs it through a pinned one-shot line, `npx -y -p @ast-grep/cli@<version> ast-grep` (the package has two binaries, so `-p` and the name are needed) or `uvx --from ast-grep-cli@<version> ast-grep`, written in the guide, with no gate step until it has a rule. It is 0.x: a minor release can change a rule's matches, so a bump is its own commit, re-measured.
 - **Layout**: `sgconfig.yml` at the root with `ruleDirs` and `testConfigs`; one rule per file, its `id` the file name; `languageGlobs` maps `.js` and `.mjs` to the TypeScript grammar when one rule covers both.
 - **Gate**: `ast-grep test --skip-snapshot-tests` and `ast-grep scan --error=unused-suppression`; a rule at `severity: error` makes the scan exit 1. Both run in the local gate and in CI. The scan of the gate runs every rule: `--filter`, `--rule`, `--inline-rules` or `--off` turn the unused-suppression report off without a word.
 - **Measure**: `ast-grep scan -c <scratch>/sgconfig.yml --json=stream <paths> > out.jsonl`, read by `tally.py astgrep`. A clean run prints nothing, so a 0 is evidence only with a probe: the same rule without its condition (the regex or the constraint) counts every site it inspected. A vendored folder the repo tracks is excluded with `--globs '!**/vendor/**'` (measured: it held most of the matches).

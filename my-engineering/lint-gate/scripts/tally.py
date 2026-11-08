@@ -286,6 +286,7 @@ _VALUE = [
     re.compile(r"but got (\d+)"),
     re.compile(r"too many parameters \((\d+)\)"),
     re.compile(r"^(\d+) tokens"),
+    re.compile(r"\(complexity: (\d+)\)"),
 ]
 
 
