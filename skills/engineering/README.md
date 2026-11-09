@@ -50,6 +50,7 @@ A rule written in `AGENTS.md` is advice. A rule a tool checks is a gate. lint-ga
 4. **It writes a transition plan** for the remaining debt, in phases laid out in lanes, so two phases never edit the same files at once. Each rule has a class, and each class has a fix recipe: a dropped error reaches its caller, an escape hatch (`any`, `unwrap`, a cast) is narrowed once at the boundary, and a god file or god function is split by the responsibilities it already carries.
 5. **It updates your `AGENTS.md`** with the gate command and the fix recipes. Rule names and numbers stay out of it, because they go stale.
 6. **Run it again and it tracks the burndown.** It measures with the plan's own commands and reports what is left, rule by rule and phase by phase: what was paid, what regressed, which rules are ready to flip, and which rule someone turned off without saying why. It ends on the next move, and offers to open one issue per phase.
+7. **On a new repo, the gate starts on day one.** With no code yet, it stops and names what comes first: a walking skeleton. On the skeleton, it reads your ADRs, turns each module owner into the one exception of its rule, and puts every rule at error, with no debt list and no plan.
 
 It also closes the exits: the shortcuts that turn a gate green without fixing anything, from a suppression with no reason to a vendored folder nobody lints. Each one gets a check, and every row of the target gets a verdict, enforced by a script.
 

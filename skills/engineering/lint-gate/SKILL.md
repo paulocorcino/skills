@@ -1,6 +1,6 @@
 ---
 name: lint-gate
-description: Tighten a repo's linters to a hard gate for agent-written code, and plan the transition when the lint debt is large. Use when the user wants to audit a repo's lint setup, adopt strict linters, pay down lint debt with a ratchet, track the burndown of a plan it wrote, or refresh this skill's references.
+description: Tighten a repo's linters to a hard gate for agent-written code, and plan the transition when the lint debt is large. Use when the user wants to audit a repo's lint setup, adopt strict linters, pay down lint debt with a ratchet, track the burndown of a plan it wrote, start a new repo under the gate, or refresh this skill's references.
 ---
 
 # Lint gate
@@ -31,7 +31,7 @@ The target only moves up. A target rule that is pure noise for this repo is turn
 
 ## Steps
 
-A repo with a lint transition plan this skill wrote (its record `lint-record.json` beside it, or the plan alone) runs `references/burndown.md` instead of these steps, unless the user asks for a fresh diagnosis. A request to refresh the references runs `references/maintenance.md`.
+A repo with a lint transition plan this skill wrote (its record `lint-record.json` beside it, or the plan alone) runs `references/burndown.md` instead of these steps, unless the user asks for a fresh diagnosis. A repo with no code yet, or whose measure in step 2 finds no site but an owner module's use of its own capability, follows `references/skeleton.md`. A request to refresh the references runs `references/maintenance.md`.
 
 ### 1. Inventory
 
