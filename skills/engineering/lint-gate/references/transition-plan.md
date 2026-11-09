@@ -1,10 +1,24 @@
 # Transition plan
 
-The shape of the plan step 6 writes. The plan is read cold by an agent that does not have this skill, so everything it needs is in the plan itself: commands, fix recipes, exception forms, done criteria. The scripts of the skill (`tally.py`, `drift.py`, `debt.py`, `rows.py`) sit next to the plan, so its measure commands run as written.
+The shape of what step 6 writes. The plan is read cold by an agent that does not have this skill, so everything it needs is beside it: commands, fix recipes, exception forms, done criteria. The scripts of the skill (`tally.py`, `drift.py`, `debt.py`, `rows.py`, `progress.py`) sit next to the plan, so its commands run as written.
+
+Step 6 writes three things, one per reader, so the file an agent reads to work a phase stays small however large the repo:
+
+- **The plan** (`lint-transition.md`), the contract: what to do and how. It is written once and changes only when the plan itself changes (a scope rule added, a phase cut again), in a commit of its own.
+- **The evidence** (`lint-evidence.md`, beside it): Measured and Coverage, the audit of how the plan was cut. The burndown and the author read it; the agent working a phase does not.
+- **The state**, in the record (`lint-record.json`: the counts, the phase of each rule, the layout) and its history (`lint-record.history.jsonl`: the points, the answers, the issues, the notes). The history only grows: `progress.py` appends one line per event, and nothing else writes it.
 
 Fill every section; a section with nothing to say holds `none — <why>`.
 
-## Sections
+## The plan
+
+### Working this plan
+
+Copy this section into the plan as it is, with the paths of this repo:
+
+- Work one phase: `python <scripts>/progress.py show <record> <phase id> --plan <this plan>` prints its section with its state: the phases it waits for, its counts at the last point, the decisions that hold it.
+- Record each change of state with its command, which appends to the history: a decision answered, `progress.py decide <record> <Dn> "<answer>" --date <date>`; an issue opened, `progress.py issue <record> <phase or Dn> <url> --date <date>`; a slice landed or a rule flipped, `progress.py note <record> "<what>" --date <date>`. `progress.py log <record>` prints the state.
+- The plan's text changes only when the plan changes. `progress.py check <record> --plan <this plan>` runs in the gate: it fails on a section missing, a phase heading with no phase in the record or the reverse, and a plan whose last line is not the end marker.
 
 ### Target
 
@@ -15,22 +29,13 @@ One paragraph: the end state of the gate (every rule an error, pinned tools, one
 
 Then the target configs in full, as they will be when the last phase closes.
 
-### Measured
-
-The commit SHA, the date, each tool and its version, and every command used to measure, with its `tally.py` invocation; the commands read the drafts in `lint-drafts/`, and `lint-record.json` holds the same measure for the burndown. Then the debt table, largest first:
-
-| Rule | Tool | Class | Production | Test | Scopes | Strategy | Phase |
-|---|---|---|---|---|---|---|---|
-
-Then the rules that are `n/a` with their reasons, and the existing suppressions per form.
-
 ### Decisions for the human
 
-Each `decision`: the rule, the question, the options with what each costs, and the phase or slice it holds. A held slice starts once the answer is recorded here; the rest of its phase does not wait for it.
+Each `decision`, under its id (`D1`, `D2`): the rule, the question, the options with what each costs, and the phase or slice it holds. A held slice starts once the answer is recorded (`progress.py decide`); the rest of its phase does not wait for it.
 
 ### Phases
 
-In the order of `## Phase order` of the skill, restated here with the reason for this repo's order, and the lanes: each lane, its phases in order, and the files they share. Phase 0 is the gate itself when it is not yet complete. Each phase:
+In the order of `## Phase order` of the skill, restated here with the reason for this repo's order, and the lanes: each lane, its phases in order, and the files they share. Phase 0 is the gate itself when it is not yet complete. Each phase sits under a heading `### Phase <id> — <title>`, its id as the record's layout names it, and holds:
 
 - **Lane**: its lane and the phases it waits for (`Rust, after Phase 2`; the first of a lane: `Rust, after Phase 1`; a phase across lanes: `own lane, after Phases 4 and 8`). A phase starts when each phase it waits for is closed. A phase is closed when its Done when holds, or when all that is left of it is a slice held by a decision that edits no file of the waiting phase (a repository setting, a threshold): that slice stays open on its own and holds nothing after it.
 - **Rules**: the rules it takes to error, and the strategy of each.
@@ -49,7 +54,7 @@ The shapes the next change will copy: the debt list (the group on, each rule wit
 
 Copy this section into the plan as it is:
 
-- A fix keeps the behavior. A behavior change is its own commit, outside the lint work.
+- A fix keeps the behavior. A Dropped value or Fail fast fix changes only the failure path, by design: a failure that was hidden now reaches its caller, and the commit body names each such site. Any other behavior change is its own commit, outside the lint work.
 - Each rule has a class, and the class gives the fix:
   - **Dropped value** (an ignored error or `Result`, a floating Promise, a blind `except`, a value never read): the value reaches its caller or a log line. The commit body names each site where a failure became visible.
   - **Fail fast** (a fallback that hides a failure): the fallback goes; the failure surfaces at the boundary that can act on it.
@@ -62,10 +67,29 @@ Copy this section into the plan as it is:
 - A baseline or a ratchet constant only goes down, in the commit that removed the sites. It rises only in a move: the commit takes at least as many sites off a debt list as it adds exceptions, and its message gives both counts.
 - Each slice leaves the whole gate green.
 
+### End marker
+
+The plan's last line, after Fix discipline:
+
+```
+<!-- end of the plan: progress.py check reads this line -->
+```
+
+## The evidence
+
+### Measured
+
+The commit SHA, the date, each tool and its version, and every command used to measure, with its `tally.py` invocation; the commands read the drafts in `lint-drafts/`, and the record holds the same measure for the burndown. Then the debt table, largest first:
+
+| Rule | Tool | Class | Production | Test | Scopes | Strategy | Phase |
+|---|---|---|---|---|---|---|---|
+
+Then the rules that are `n/a` with their reasons, and the existing suppressions per form.
+
 ### Coverage
 
 The output of `rows.py list <references read>`, each row with its verdict (`on`, `sites N`, `phase N`, `closed by <check>`, `open`, `decision — <Dn>`, `n/a — <why>`, `out — <why>`). `rows.py check` holds it: a row with no verdict fails.
 
-### Progress
+## The state
 
-One line per phase and decision with its issue when one is open, then one line per burndown point, as `progress.py point --append` prints it: date, commit, sites left, rules at 0, scope, regressions. Each phase or slice that closes runs a point.
+The layout, passed to `progress.py record --layout`: each phase of the plan by its id, with its lane and the phases it waits for (the Lane field), Phase 0 and the other phases with no rule included; and each decision with the phases it holds. Each issue opened, each answer and each slice landed goes in the history by its command (§ Working this plan); each burndown point by `progress.py point --append`.

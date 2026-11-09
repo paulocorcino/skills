@@ -316,9 +316,11 @@ def entries(text: str) -> tuple[dict[str, int], dict[str, str], int, set[str]]:
         before = len(debt) + len(noise)
         inline_debt = re.match(_KEY + r'.*?' + _COUNT, line)
         inline_noise = re.match(_KEY + r'.*?' + _NOISE, line)
-        alone_debt = re.match(r'^\s*' + _COUNT + r'\s*$', line)
+        alone_debt = re.match(r'^\s*' + _COUNT + r'\b.*$', line)  # a note may follow: `; Phase 1`
         alone_noise = re.match(r'^\s*' + _NOISE, line)
         key = re.match(_KEY, line)
+        if re.search(r'(?:#|//)\s*debt:', line) and not (inline_debt or alone_debt):
+            comments += 1  # a `debt:` comment in a form this reads not: counted, so it shows as tied to no entry
         if inline_debt:
             comments += 1
             debt[_name(inline_debt)] = int(inline_debt.group(len(inline_debt.groups())))

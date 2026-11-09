@@ -6,10 +6,10 @@ knob the target names. Skipping a row fails nothing by itself; this script
 makes the skip fail.
 
   rows.py list REF...           # the Coverage table to fill: one line per row
-  rows.py check PLAN REF...     # fails when a row has no verdict in PLAN
+  rows.py check EVIDENCE REF... # fails when a row has no verdict in EVIDENCE
   rows.py keys REF... --in FILE...   # the target config keys no FILE names
 
-The plan carries a `## Coverage` (or `### Coverage`) section with a table `| Row | Verdict |`. A
+The plan's evidence (`lint-evidence.md`) carries a `## Coverage` (or `### Coverage`) section with a table `| Row | Verdict |`. A
 verdict is one of:
 
   on                        the check runs in the gate today (`on — <note>` too)

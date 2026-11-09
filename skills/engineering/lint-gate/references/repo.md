@@ -105,7 +105,7 @@ The ways to turn the gate green without fixing the code. Each one is `closed by 
 | A split into helpers with no responsibility, to pass a complexity limit | open: no tool tells a responsibility from a cut; a human reads the split |
 | Two rules merged into one helper to remove a clone | open: no tool tells one rule from two that look alike; a human reads the merge |
 | A clone hidden by an ignore marker (`jscpd:ignore-start`) | a ratchet that counts the markers, each with its reason |
-| A row of a reference that the lint gate run skipped | `rows.py check` on the plan |
+| A row of a reference that the lint gate run skipped | `rows.py check` on the plan's evidence |
 | An `ast-grep-ignore` with no rule id, or on the first line of a file | the ratchet at 0 on ignores without a rule id and a reason (§ ast-grep) |
 | A force push to the default branch that drops the base commit: `shrink` against an empty base passes | branch protection on the default branch (no force push); a pull request compares with its merge base |
 | The skill's own artifacts in the repo (the copied scripts, the plan's code blocks) counted or linted as the repo's code | excluded from the linters and jscpd by path, with the reason, and named in the plan |

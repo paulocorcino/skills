@@ -1,12 +1,12 @@
 # Burndown
 
-The mode for a repo that already has a lint transition plan this skill wrote. It measures again what the plan measured and reports what is left: a _burndown_, one dated point per run, against the record the plan was cut from. It writes the point and nothing else: no lint config, no site, no plan section but Progress. The phases change the code; the burndown tells where they stand.
+The mode for a repo that already has a lint transition plan this skill wrote. It measures again what the plan measured and reports what is left: a _burndown_, one dated point per run, against the record the plan was cut from. It appends the point to the history and nothing else: no lint config, no site, no line of the plan. The phases change the code; the burndown tells where they stand.
 
 The record is `lint-record.json` beside the plan (written by step 6), its history `lint-record.history.jsonl`, and the drafts its commands read in `lint-drafts/`. The scripts are the plan's copy of `scripts/`.
 
 ## Steps
 
-1. **Read** the plan, and list the runs to repeat: `progress.py commands <record>`.
+1. **Read** the plan and its state, and list the runs to repeat: `progress.py log <record>`, `progress.py commands <record>`.
 
 2. **Erosion.** What step 5 put in place is still there:
    - the whole gate runs green (each failure listed with its check); with no gate command yet, the checks the plan names, run as CI runs them;
@@ -22,14 +22,18 @@ The record is `lint-record.json` beside the plan (written by step 6), its histor
    - `ready to flip`: the rule is at 0 and still listed as debt. Deleting its entry is the next change of its phase.
    - `debt comment above the count`: the config's `debt: N` is higher than the sites left. The next change of its phase lowers it; this mode leaves it.
 
-5. **Phases.** A phase with no rule (Phase 0) is read by its Done when. `point` gives each other phase `closed`, `ready to flip`, `in progress`, `not started` or `regressed`. A phase held by a decision with no answer in the plan adds `held by <Dn>` to its state (`regressed, held by D1`).
+5. **Phases.** A phase with no rule (Phase 0) is read by its Done when. `point` gives each other phase `closed`, `ready to flip`, `in progress`, `not started` or `regressed`. A phase held by a decision `log` shows open adds `held by <Dn>` to its state (`regressed, held by D1`).
 
-6. **Progress.** Add the line `point` printed to the plan's Progress section, in the form of the lines already there. With the user's authorization, commit it with the history file, in a commit of its own.
+6. **Progress.** `point --append` wrote the point to the history. With the user's authorization, commit the history file in a commit of its own.
 
 7. **Report**: the regressions first (`up`, `off in the repo`, the erosion of step 2), then the scope, then the rules ready to flip, the phases, and the line of totals. End on the call to action of step 7 of the skill, built from this point: the regressions to answer, the flips ready, the phases that can start now, one per lane.
 
-Done when every run of the record was measured again; `point` ran with `--append`; each `up` and `off in the repo` names the commit or edit that caused it, or `not found`; each scope rule is in the plan or listed for the human; every phase has a state; the Progress line is in the plan; and the report ends on the call to action.
+Done when every run of the record was measured again; `point` ran with `--append`; each `up` and `off in the repo` names the commit or edit that caused it, or `not found`; each scope rule is in the plan or listed for the human; every phase has a state; the point is in the history; and the report ends on the call to action.
 
 ## A plan with no record
 
 A plan written before the record existed. The first burndown adopts it: the plan's copy of `scripts/` is refreshed from this skill (it may lack `progress.py`), in a commit of its own; the drafts are the configs of the plan's Target section, or the repo's own config when the plan measured with it (a flag such as `--enable-only <the debt rules>` turning the debt on), copied into `lint-drafts/`; the commands are those of its Measured section, pointed at them; the phases come from its debt table, each rule named as `tally.py` prints it. `progress.py record` writes the record at HEAD, and `point --append` takes the first point, flat against the record. The report compares the record with the plan's numbers: exact when the code is the plan's commit, marked approximate when it moved.
+
+## A plan of the older shape
+
+A plan with Measured, Coverage or Progress in its own file, or a record with no layout. The first burndown moves it to the shape of `transition-plan.md`, in a commit of its own before the point: Measured and Coverage move, as they are, to the evidence beside the plan; each Progress line becomes a `progress.py note` with its date (a line with none takes the date of the commit that added it: `git log -1 --format=%as -S '<the line>' -- <plan>`), an issue line a `progress.py issue`, an answer recorded in the plan a `progress.py decide`; the Progress section goes; the section Working this plan and the end marker are added; each phase heading takes the form `### Phase <id>`; and the record is written again with `--layout`, its `--sha` and `--date` the ones it already holds (the code it measured did not move). A move is a cut and a paste, made by a script that writes the new files whole and then checks them: `progress.py check <record> --plan <plan>` and `rows.py check <evidence> <references read>` pass, and each moved section holds as many lines as it held in the plan.
