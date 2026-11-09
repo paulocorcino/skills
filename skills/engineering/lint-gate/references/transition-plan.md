@@ -17,7 +17,7 @@ Then the target configs in full, as they will be when the last phase closes.
 
 ### Measured
 
-The commit SHA, the date, each tool and its version, and every command used to measure, with its `tally.py` invocation. Then the debt table, largest first:
+The commit SHA, the date, each tool and its version, and every command used to measure, with its `tally.py` invocation; the commands read the drafts in `lint-drafts/`, and `lint-record.json` holds the same measure for the burndown. Then the debt table, largest first:
 
 | Rule | Tool | Class | Production | Test | Scopes | Strategy | Phase |
 |---|---|---|---|---|---|---|---|
@@ -26,15 +26,16 @@ Then the rules that are `n/a` with their reasons, and the existing suppressions 
 
 ### Decisions for the human
 
-Each `decision`: the rule, the question, the options with what each costs, and the phase it holds. A phase held by a decision starts once the answer is recorded here.
+Each `decision`: the rule, the question, the options with what each costs, and the phase or slice it holds. A held slice starts once the answer is recorded here; the rest of its phase does not wait for it.
 
 ### Phases
 
-In the order of `## Phase order` of the skill, restated here with the reason for this repo's order. Phase 0 is the gate itself when it is not yet complete. Each phase:
+In the order of `## Phase order` of the skill, restated here with the reason for this repo's order, and the lanes: each lane, its phases in order, and the files they share. Phase 0 is the gate itself when it is not yet complete. Each phase:
 
+- **Lane**: its lane and the phases it waits for (`Rust, after Phase 2`; the first of a lane: `Rust, after Phase 1`; a phase across lanes: `own lane, after Phases 4 and 8`). A phase starts when each phase it waits for is closed. A phase is closed when its Done when holds, or when all that is left of it is a slice held by a decision that edits no file of the waiting phase (a repository setting, a threshold): that slice stays open on its own and holds nothing after it.
 - **Rules**: the rules it takes to error, and the strategy of each.
 - **Measure first**: the commands that re-count its sites at the start of the phase. The code has moved since the plan was written; the slices follow the new count.
-- **Slices**: one row per slice (scope, sites per rule), each small enough for one review, each leaving the gate green.
+- **Slices**: one row per slice (scope, sites per rule), each small enough for one review, each leaving the gate green. When the slices repeat one recipe over several scopes, the first is the tracer bullet: the smallest scope that takes every part of the recipe end to end, listed first, and the others start after it lands. Slices that are distinct tasks (the items of Phase 0) have no tracer. Slices of one phase may be worked side by side and land one at a time, each rebased on the last.
 - **How a site is fixed**: the recipe of each rule's class (§ Fix discipline), plus what a rule needs beyond it, and when the exception form is allowed.
 - **Ratchet**: the baseline or count it adds or lowers, and the test that checks it.
 - **Agent docs**: the lines of the canonical agent doc that change in the commit that turns the rule on: the `advice` line it now checks becomes the behavior, and the recipe of its class joins the lint gate block when it is the first rule of that class. No rule name, number or version goes in.
@@ -58,7 +59,7 @@ Copy this section into the plan as it is:
   - **Surface** (format, naming, imports): the tool's own command, in a commit of its own.
 - An exception is the last resort: inline, the rule named, and a reason that names where the rule's approximation is wrong here (the false positive), or the design fact that makes compliance impossible. "To pass the check" is not a reason. Each exception is counted by a ratchet.
 - A test is never weakened, skipped or deleted to turn the gate green, and a hook is never bypassed.
-- A baseline or a ratchet constant only goes down, in the commit that removed the sites.
+- A baseline or a ratchet constant only goes down, in the commit that removed the sites. It rises only in a move: the commit takes at least as many sites off a debt list as it adds exceptions, and its message gives both counts.
 - Each slice leaves the whole gate green.
 
 ### Coverage
@@ -67,4 +68,4 @@ The output of `rows.py list <references read>`, each row with its verdict (`on`,
 
 ### Progress
 
-One line per phase and decision with its issue when one is open, then one line per closed phase or slice: date, commit, the new counts.
+One line per phase and decision with its issue when one is open, then one line per burndown point, as `progress.py point --append` prints it: date, commit, sites left, rules at 0, scope, regressions. Each phase or slice that closes runs a point.

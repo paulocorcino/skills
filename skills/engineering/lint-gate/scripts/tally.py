@@ -375,7 +375,7 @@ def dump(sites: set[Site], path: str) -> None:
     out: dict[str, list[str]] = defaultdict(list)
     for rule, f, line, col in sorted(sites):
         out[rule].append(f"{f}:{line}:{col}")
-    with open(path, "w", encoding="utf-8") as fh:
+    with open(path, "w", encoding="utf-8", newline="\n") as fh:
         json.dump(out, fh, indent=1, sort_keys=True)
 
 

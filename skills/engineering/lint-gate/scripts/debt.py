@@ -18,7 +18,9 @@ the config where the comment says, keeping the file's line endings.
 not have, or a count above its BASE count, fails it. CI runs it against the base
 branch: `git show origin/main:Cargo.toml > base.toml && debt.py shrink base.toml Cargo.toml`.
 A base with no debt list (or no file) passes: that change brings the first list.
-`shrink` also fails when a `debt:` comment is tied to no entry (a config form it
+`shrink` also fails on an entry added to a debt list with no `debt:` or
+`noise:` comment (a rule turned off with no reason, which no count sees), when
+a `debt:` comment is tied to no entry (a config form it
 does not read would pass any growth), and on a new `noise:` entry whose reason
 cites no decision id (`D3`, `ADR-12`) found in PLAN: a rule off for good is a
 decision, not a way out of the debt list.
@@ -291,16 +293,27 @@ def _name(m: re.Match) -> str:
     return m.group("yaml") or m.group("item") or m.group("key") or m.group("bare")
 
 
-def entries(text: str) -> tuple[dict[str, int], dict[str, str], int]:
-    """The debt and noise entries of a config, and the count of `debt:` comments
-    tied to no entry. A comment sits on its own line above its entry, or at the
-    end of the entry's line; a noise comment may cover a line of several items."""
+_OFF = re.compile(r'[:=]\s*"?(off|allow)"?\s*,?\s*(?:#.*|//.*)?$')
+
+
+def entries(text: str) -> tuple[dict[str, int], dict[str, str], int, set[str]]:
+    """The debt and noise entries of a config, the count of `debt:` comments
+    tied to no entry, and the plain entries: a list item (`"X",`, `- x`, `x,`)
+    or a key set `off`/`allow` with no `debt:` or `noise:` comment, in a block
+    (a run of entry, comment and blank lines) that holds a debt or noise
+    entry, so a list of paths or members stays out. A comment
+    sits on its own line above its entry, or at the end of the entry's line;
+    a noise comment may cover a line of several items."""
     debt: dict[str, int] = {}
     noise: dict[str, str] = {}
+    plain: set[str] = set()
+    block: set[str] = set()
+    listed = False
     comments = 0
     pending_debt: int | None = None
     pending_noise: str | None = None
     for line in text.replace("\r\n", "\n").split("\n"):
+        before = len(debt) + len(noise)
         inline_debt = re.match(_KEY + r'.*?' + _COUNT, line)
         inline_noise = re.match(_KEY + r'.*?' + _NOISE, line)
         alone_debt = re.match(r'^\s*' + _COUNT + r'\s*$', line)
@@ -328,9 +341,19 @@ def entries(text: str) -> tuple[dict[str, int], dict[str, str], int]:
         elif key and pending_noise is not None:
             noise[_name(key)] = pending_noise
             pending_noise = None
+        elif key and (key.group("item") or key.group("yaml") or key.group("bare") or _OFF.search(line)):
+            block.add(_name(key))
+            pending_debt = pending_noise = None
+        elif line.strip() and not line.strip().startswith(("#", "//")) and not key:
+            # A line that is no entry and no comment ends the block.
+            plain |= block if listed else set()
+            block, listed = set(), False
+            pending_debt = pending_noise = None
         elif line.strip() and not line.strip().startswith(("#", "//")):
             pending_debt = pending_noise = None
-    return debt, noise, comments - len(debt)
+        listed = listed or len(debt) + len(noise) > before
+    plain |= block if listed else set()
+    return debt, noise, comments - len(debt), plain
 
 
 def debt_entries(text: str) -> dict[str, int]:
@@ -339,8 +362,9 @@ def debt_entries(text: str) -> dict[str, int]:
 
 def shrink(args: argparse.Namespace) -> int:
     base_path = Path(args.base)
-    base, base_noise, _ = entries(base_path.read_text(encoding="utf-8-sig")) if base_path.exists() else ({}, {}, 0)
-    head, head_noise, unread = entries(Path(args.config).read_text(encoding="utf-8-sig"))
+    base, base_noise, _, base_plain = (entries(base_path.read_text(encoding="utf-8-sig"))
+                                       if base_path.exists() else ({}, {}, 0, set()))
+    head, head_noise, unread, head_plain = entries(Path(args.config).read_text(encoding="utf-8-sig"))
     if unread:
         # A debt comment no entry follows: a form this script does not read, which would pass any growth.
         print(f"{unread} `debt:` comments are tied to no entry: shrink cannot read this config's form")
@@ -360,6 +384,9 @@ def shrink(args: argparse.Namespace) -> int:
               f"{len(head)} entries ({sum(head.values())} sites), {len(head_noise)} noise")
         return 0
     bad += [f"new debt entry: {r} ({n})" for r, n in head.items() if r not in base]
+    # A rule turned off with no comment is an exit the counts above never see.
+    bad += [f"new entry with no `debt:` or `noise:` comment: {r}: a rule off says why"
+            for r in sorted(head_plain - base_plain)]
     bad += [f"debt grew: {r} {base[r]} -> {n}" for r, n in head.items() if r in base and n > base[r]]
     for line in bad:
         print(line)
