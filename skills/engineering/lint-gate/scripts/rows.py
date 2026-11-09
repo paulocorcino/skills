@@ -43,6 +43,14 @@ _VERDICT = re.compile(
 )
 
 
+_CELL = re.compile(r"(?<!\\)\|")
+
+
+def cells(line: str) -> list[str]:
+    """The cells of a table row; an escaped pipe stays inside its cell."""
+    return _CELL.split(line.strip().strip("|"))
+
+
 def clean(cell: str) -> str:
     cell = re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", cell)
     cell = cell.replace("`", "").replace("**", "")
@@ -56,10 +64,10 @@ def rows_of(path: Path) -> list[str]:
     i = 0
     while i < len(lines):
         if lines[i].startswith("|") and i + 1 < len(lines) and _SEP.match(lines[i + 1]):
-            head = clean(lines[i].strip("|").split("|")[0])
+            head = clean(cells(lines[i])[0])
             i += 2
             while i < len(lines) and lines[i].startswith("|"):
-                first = clean(lines[i].strip().strip("|").split("|")[0])
+                first = clean(cells(lines[i])[0])
                 rid = f"{stem}: {first}"
                 if rid in out:
                     rid = f"{stem}: {first} ({head})"
@@ -80,9 +88,9 @@ def coverage(plan: Path) -> dict[str, str]:
     for line in m.group(1).splitlines():
         if not line.startswith("|") or _SEP.match(line):
             continue
-        cells = [clean(c) for c in line.strip().strip("|").split("|")]
-        if len(cells) >= 2 and cells[0] not in ("Row", ""):
-            got[cells[0]] = cells[1]
+        row = [clean(c) for c in cells(line)]
+        if len(row) >= 2 and row[0] not in ("Row", ""):
+            got[row[0]] = row[1]
     return got
 
 

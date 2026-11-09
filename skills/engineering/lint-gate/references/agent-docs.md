@@ -42,6 +42,7 @@ Written in the language of the repo's docs; the `<...>` filled from this repo, t
   - a duplicated block that is one rule becomes one function named for the rule; two rules that only look alike stay two, with the ignore marker and its reason.
 - An exception is the last resort: `<exception form>`, with a reason that says why the rule is wrong at that line.
 - Linter configs, baselines and ratchet constants change only when the task is about them, and a count only goes down.
+- <With a debt list:> the lines you add meet every rule, the rules still on the debt list too: the gate fails on a debt rule's site on a new line.
 ```
 
 ## The tools section

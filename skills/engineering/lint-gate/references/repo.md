@@ -111,6 +111,10 @@ The ways to turn the gate green without fixing the code. Each one is `closed by 
 | The skill's own artifacts in the repo (the copied scripts, the plan's code blocks) counted or linted as the repo's code | excluded from the linters and jscpd by path, with the reason, and named in the plan |
 | A new `noise:` entry in a debt list: a debt rule off "for good" | `debt.py shrink` fails unless the reason cites a decision id the plan records |
 | A fake reason on an exception | open: a ratchet counts the exceptions, and a human reads each new one |
+| A new site of a rule on the debt list: the rule is off, so its debt grows unseen | `tally.py added` over a draft run, against the merge base: a site on a line the change adds fails (SKILL.md step 5) |
+| A step that passes when its tool is missing or fails (`\|\| true`, `command -v x &&`, `continue-on-error: true`, `set +e`, a skip when not installed) | each tool runs from the lockfile or the tools module, so a missing one fails its step; the pattern below over the gate script and the CI files, held by `--expect` at its count, each match with its reason beside it |
+
+The pattern of the last row: `tally.py pattern '\|\|\s*(true\b|:|exit 0)|continue-on-error:\s*true|command -v |set \+e' <gate script> <CI folder> --ext <their extensions> --expect <N>`.
 
 ## Agent docs
 

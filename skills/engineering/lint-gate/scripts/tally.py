@@ -10,6 +10,7 @@ can report one rule twice at one position (PT018 on `assert a and b and c`).
   tally.py curve FORMAT OUTPUT --rule RULE [--at 5,8,10,12,15,20]
   tally.py pattern REGEX [PATH...] --ext .rs,.ts [--expect N] [--scope-depth N]
   tally.py sizes [PATH...] --ext .py,.ts [--lines 300,400,500,700] [--width 80,100,120]
+  tally.py added FORMAT OUTPUT --base REF [--ignore RULE,RULE]
 
 FORMAT is one of: clippy, oxlint, eslint, ruff, mypy, pyright, golangci, tsc.
 OUTPUT is the file the tool wrote (`-` for stdin).
@@ -59,6 +60,14 @@ non-blank lines, and the lines wider than each width.
 The plain mode adds the columns `safe` and `unsafe` when the tool reports its
 own fixes (ruff, clippy): the sites its fix command rewrites, apart from the
 ones that need a hand.
+
+`added` holds new code to the whole target while the debt is paid: it reads
+the output of a draft run (every rule of the target on, the debt rules too)
+and fails on each site that sits on a line the change adds against REF (the
+merge base: `git merge-base HEAD origin/main`; the working tree counts, so it
+runs before a commit too). A site on an old line is the plan's; a site on a
+new line is the change's. --ignore leaves out rules that report a line the
+change did not write (complexity at the `def`: a baseline holds those).
 
 Warnings on stderr mean the count is incomplete: the tool reported a parse or
 build error, so part of the code was never checked.
@@ -502,7 +511,56 @@ def cmd_sizes(argv: list[str]) -> int:
     return 0
 
 
+_HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
+
+
+def added_lines(base: str) -> dict[str, set[int]]:
+    """Path -> the line numbers the working tree adds against BASE."""
+    out = subprocess.run(["git", "diff", "-U0", "--no-color", "--no-ext-diff", base, "--"],
+                         capture_output=True, text=True, encoding="utf-8", errors="replace")
+    if out.returncode != 0:
+        sys.exit(f"git diff {base} failed: {out.stderr.strip()}")
+    lines: dict[str, set[int]] = defaultdict(set)
+    path = None
+    for line in out.stdout.splitlines():
+        if line.startswith("+++ "):
+            path = None if line[4:] == "/dev/null" else line[4:].removeprefix("b/")
+        elif path and (m := _HUNK.match(line)):
+            start, count = int(m.group(1)), int(m.group(2) or 1)
+            lines[path].update(range(start, start + count))
+    # Files git does not track yet are new code too.
+    untracked = subprocess.run(["git", "ls-files", "--others", "--exclude-standard"],
+                               capture_output=True, text=True).stdout.split()
+    for f in untracked:
+        try:
+            with open(f, encoding="utf-8", errors="replace") as fh:
+                lines[f].update(range(1, sum(1 for _ in fh) + 1))
+        except OSError:
+            continue
+    return lines
+
+
+def cmd_added(argv: list[str]) -> int:
+    ap = argparse.ArgumentParser(prog="tally.py added")
+    ap.add_argument("format", choices=sorted(PARSERS))
+    ap.add_argument("output")
+    ap.add_argument("--base", required=True, help="the merge base the change is measured against")
+    ap.add_argument("--ignore", default="", help="rules left out, comma-separated")
+    args = ap.parse_args(argv)
+    skip = {r for r in args.ignore.split(",") if r}
+    new = added_lines(args.base)
+    hits = sorted((f, line, col, rule, msg) for rule, f, line, col, msg in hits_of(args.format, args.output)
+                  if rule not in skip and line in new.get(f, ()))
+    for f, line, col, rule, msg in hits:
+        print(f"{f}:{line}:{col}: {rule} {msg}")
+    print(f"{len(hits)} sites on lines this change adds"
+          + ("; new code meets the whole target, debt rules too: fix them" if hits else ""))
+    return 1 if hits else 0
+
+
 def main() -> int:
+    if len(sys.argv) > 1 and sys.argv[1] == "added":
+        return cmd_added(sys.argv[2:])
     if len(sys.argv) > 1 and sys.argv[1] == "curve":
         return cmd_curve(sys.argv[2:])
     if len(sys.argv) > 1 and sys.argv[1] == "pattern":
