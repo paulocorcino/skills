@@ -272,14 +272,16 @@ def cmd_log(a: argparse.Namespace) -> int:
         if p in issues:
             print(f"  Phase {p}: {issues[p]}")
     total = sum(sum(r["counts"].values()) for r in rec["runs"].values())
-    print("history:")
-    print(f"  {rec['date']} {rec['sha']}: record, {total} sites")
+    lines = [(rec["date"], f"{rec['date']} {rec['sha']}: record, {total} sites")]
     for e in history(a.record):
         if "kind" not in e:
-            print(f"  {e['date']} {e['sha']}: point, {e['total']} sites left"
-                  + (f", {e['scope']} of scope" if e.get("scope") else ""))
+            lines.append((e["date"], f"{e['date']} {e['sha']}: point, {e['total']} sites left"
+                          + (f", {e['scope']} of scope" if e.get("scope") else "")))
         elif e["kind"] == "note":
-            print(f"  {e['date']}: {e['text']}")
+            lines.append((e["date"], f"{e['date']}: {e['text']}"))
+    print("history:")
+    for _, line in sorted(lines, key=lambda x: x[0]):  # stable: one date keeps the order written
+        print(f"  {line}")
     return 0
 
 
