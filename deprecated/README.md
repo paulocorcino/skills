@@ -1,5 +1,5 @@
 # Deprecated
 
-Skills a newer one replaced, kept for reference. They are hidden from `npx skills` (`metadata.internal: true`).
+Skills that a newer skill replaced. They are here for reference only. `npx skills` does not show them (`metadata.internal: true`).
 
-- **quality-gate**: a ratchet over Python, Go, Rust and BunJS projects, with its own runner. Replaced by [lint-gate](../skills/engineering/lint-gate/SKILL.md), which drives each stack's own linters to a hard gate instead of wrapping them. `quality_gate.py` is its import shim, and `quality-gate-docs/` its decision records and build plan.
+- **quality-gate**: checked that quality never went down in Python, Go, Rust and BunJS projects, with its own runner. [lint-gate](../skills/engineering/lint-gate/SKILL.md) replaced it. lint-gate does not wrap the linters in its own tool: it makes each language's own linters strict. `quality_gate.py` is the import shim of quality-gate, and `quality-gate-docs/` has its decision records and its build plan.
