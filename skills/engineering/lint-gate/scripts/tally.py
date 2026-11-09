@@ -2,7 +2,8 @@
 """Count lint sites per rule from a tool's machine-readable output.
 
 A site is one (rule, file, line, column). Duplicates are dropped: clippy reports
-a site once per target that compiles the file, and a macro can repeat it.
+a site once per target that compiles the file, and a macro can repeat it; ruff
+can report one rule twice at one position (PT018 on `assert a and b and c`).
 
   tally.py FORMAT OUTPUT [--json OUT.json] [--scope-depth N]
   tally.py diff A.json B.json                  # sites in B that are not in A
@@ -55,6 +56,10 @@ fails above and below N, as the plain mode does.
 tracked by git under PATH with an extension of --ext, the number of their
 non-blank lines, and the lines wider than each width.
 
+The plain mode adds the columns `safe` and `unsafe` when the tool reports its
+own fixes (ruff, clippy): the sites its fix command rewrites, apart from the
+ones that need a hand.
+
 Warnings on stderr mean the count is incomplete: the tool reported a parse or
 build error, so part of the code was never checked.
 """
@@ -73,6 +78,8 @@ from typing import Iterable, Iterator
 
 Site = tuple[str, str, int, int]  # rule, file, line, column
 Hit = tuple[str, str, int, int, str]  # a site and its message
+# A parser may yield a sixth field: "safe" when the tool's own fix keeps the
+# behavior, "unsafe" when it may change it, "" when the tool has no fix.
 
 
 def warn(msg: str) -> None:
@@ -120,7 +127,17 @@ def parse_clippy(text: str) -> Iterable[Hit]:
             yield code, "(no file)", 0, 0, text_
             continue
         s = spans[0]
-        yield code, norm_path(s["file_name"]), s["line_start"], s["column_start"], text_
+        yield code, norm_path(s["file_name"]), s["line_start"], s["column_start"], text_, clippy_fix(msg)
+
+
+_CLIPPY_SAFE = {"MachineApplicable"}
+_CLIPPY_UNSAFE = {"MaybeIncorrect", "HasPlaceholders"}
+
+
+def clippy_fix(msg: dict) -> str:
+    kinds = {sp.get("suggestion_applicability")
+             for m in [msg, *msg.get("children", [])] for sp in m.get("spans", [])}
+    return "safe" if kinds & _CLIPPY_SAFE else "unsafe" if kinds & _CLIPPY_UNSAFE else ""
 
 
 def parse_oxlint(text: str) -> Iterable[Hit]:
@@ -152,7 +169,9 @@ def parse_ruff(text: str) -> Iterable[Hit]:
             warn(f"{d.get('filename')}: {d.get('message', '')[:100]}")
             code = "(syntax error)"
         loc = d.get("location") or {}
-        yield code, norm_path(d["filename"]), loc.get("row", 0), loc.get("column", 0), d.get("message", "")
+        kind = (d.get("fix") or {}).get("applicability", "")
+        yield (code, norm_path(d["filename"]), loc.get("row", 0), loc.get("column", 0),
+               d.get("message", ""), kind if kind in ("safe", "unsafe") else "")
 
 
 def parse_mypy(text: str) -> Iterable[Hit]:
@@ -311,11 +330,13 @@ def read_output(path: str, fmt: str) -> str:
     return text
 
 
-def hits_of(fmt: str, path: str, prefix: str = "") -> list[Hit]:
+def hits_of(fmt: str, path: str, prefix: str = "", fixes: dict[Site, str] | None = None) -> list[Hit]:
     seen: dict[Site, Hit] = {}
-    for rule, f, line, col, msg in PARSERS[fmt](read_output(path, fmt)):
+    for rule, f, line, col, msg, *fix in PARSERS[fmt](read_output(path, fmt)):
         h = (rule, f"{prefix}{f}" if prefix and not f.startswith("(") else f, line, col, msg)
         seen.setdefault(h[:4], h)
+        if fixes is not None and fix and fix[0]:
+            fixes.setdefault(h[:4], fix[0])
     return list(seen.values())
 
 
@@ -324,22 +345,30 @@ def scope_of(path: str, depth: int) -> str:
     return "/".join(parts[:depth]) if len(parts) > depth else "/".join(parts[:-1]) or "."
 
 
-def print_table(sites: set[Site], depth: int | None) -> None:
+def print_table(sites: set[Site], depth: int | None, fixes: dict[Site, str] | None = None) -> None:
     by_rule: dict[str, set[Site]] = defaultdict(set)
     for s in sites:
         by_rule[s[0]].add(s)
     rows = sorted(by_rule.items(), key=lambda kv: (-len(kv[1]), kv[0]))
     width = max([len(r) for r, _ in rows] + [4])
-    print(f"{'rule':<{width}}  {'sites':>6}  {'files':>5}")
+
+    def fix_cols(ss: set[Site]) -> str:
+        if not fixes:
+            return ""
+        kinds = [fixes.get(s, "") for s in ss]
+        return f"  {kinds.count('safe'):>4}  {kinds.count('unsafe'):>6}"
+
+    head = f"  {'safe':>4}  {'unsafe':>6}" if fixes else ""
+    print(f"{'rule':<{width}}  {'sites':>6}  {'files':>5}{head}")
     for rule, ss in rows:
-        print(f"{rule:<{width}}  {len(ss):>6}  {len({s[1] for s in ss}):>5}")
+        print(f"{rule:<{width}}  {len(ss):>6}  {len({s[1] for s in ss}):>5}{fix_cols(ss)}")
         if depth:
             per_scope: dict[str, int] = defaultdict(int)
             for s in ss:
                 per_scope[scope_of(s[1], depth)] += 1
             for scope, n in sorted(per_scope.items(), key=lambda kv: (-kv[1], kv[0])):
                 print(f"  {scope:<{width - 2}}  {n:>6}")
-    print(f"{'total':<{width}}  {len(sites):>6}  {len({s[1] for s in sites}):>5}")
+    print(f"{'total':<{width}}  {len(sites):>6}  {len({s[1] for s in sites}):>5}{fix_cols(sites)}")
 
 
 def dump(sites: set[Site], path: str) -> None:
@@ -488,6 +517,7 @@ def main() -> int:
         ap.add_argument("--scope-depth", type=int)
         args = ap.parse_args(sys.argv[2:])
         sites = load(args.b) - load(args.a)
+        fixes: dict[Site, str] = {}
     else:
         ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
         ap.add_argument("format", choices=sorted(PARSERS))
@@ -497,10 +527,11 @@ def main() -> int:
         ap.add_argument("--prefix", default="", help="put before every path (jscpd names files from the scanned folder)")
         ap.add_argument("--expect", type=int, help="a ratchet: fail unless the total is exactly this")
         args = ap.parse_args()
-        sites = {h[:4] for h in hits_of(args.format, args.output, args.prefix)}
+        fixes = {}
+        sites = {h[:4] for h in hits_of(args.format, args.output, args.prefix, fixes)}
     if args.json:
         dump(sites, args.json)
-    print_table(sites, args.scope_depth)
+    print_table(sites, args.scope_depth, fixes)
     expect = getattr(args, "expect", None)
     if expect is not None and len(sites) != expect:
         more = len(sites) > expect

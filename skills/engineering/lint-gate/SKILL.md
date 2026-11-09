@@ -5,7 +5,7 @@ description: Tighten a repo's linters to a hard gate for agent-written code, and
 
 # Lint gate
 
-Correctness is not merely what the compiler accepts. Agents write code the way a junior on a deadline does: they take whatever path the tooling lets through. A rule written only in a doc is _advice_; a rule a tool checks is a _gate_. The gate is the senior reviewer: it says no the same way on every change, and it never tires. This skill takes a repo to the hard gate: it measures the _debt_ (the _sites_ each target rule fails on today), sets the tightness with the developer, flips every rule with zero debt to error, and writes a transition plan for the rest. The end state is tight: every rule an error, no baseline left, each remaining exception inline with its reason and counted by a _ratchet_.
+Correctness is not merely what the compiler accepts. Agents write code the way a junior on a deadline does: they take whatever path the tooling lets through. A rule written only in a doc is _advice_; a rule a tool checks is a _gate_. The gate makes the wrong thing hard to do: it says no the same way on every change. This skill takes a repo to the hard gate: it measures the _debt_ (the _sites_ each target rule fails on today), sets the tightness with the developer, flips every rule with zero debt to error, and writes a transition plan for the rest. The end state is tight: every rule an error, no baseline left, each remaining exception inline with its reason and counted by a _ratchet_.
 
 ## The gate
 
@@ -19,7 +19,7 @@ The seven properties of the end state, and the yardstick of every step:
 6. **A count only goes down**: a baseline, a list of exceptions, a count of a forbidden pattern.
 7. **Shift left.** Each check runs at the leftmost point it can afford: the fast linters in the agent's edit loop (the editor reads the same config; a per-edit hook runs them on the changed files and hands the output back), the whole set in the local gate, the slow ones (mutation, the platform matrix) in CI. The agent sees the failure before it says done.
 
-Every tool approximates: no checker decides a semantic property exactly, so each rule trades false positives for false negatives. A 0 from a heuristic rule means no site matched its pattern, not that the property holds; an exception is the place where the rule's approximation is wrong.
+Every tool approximates: no checker decides a semantic property exactly, so each rule trades false positives for false negatives. A site of a heuristic rule is a _smell_: a sign to read the code there, not proof of a defect. A 0 from a heuristic rule means no site matched its pattern, not that the property holds; an exception is the place where the rule's approximation is wrong.
 
 One tool per property. When two tools cover one property (oxlint and ESLint, mypy and pyright, two complexity scores), the repo keeps the one it has. A switch is a `decision` backed by a measure on this repo: the run time of each, and the sites each finds that the other misses. A tool's merits come from that measure, never from memory.
 
@@ -68,6 +68,7 @@ For each knob (§ Knobs), measure its _curve_, the debt at each candidate value:
 
 - A count of 0 is evidence only when the run demonstrably checked the code: the same run reports other sites, or its file count matches the inventory. A run that built nothing, or matched no files, also exits 0. A `warning:` from `tally.py` means part of the code was never checked.
 - A draft outside the repo can read paths from its own folder: check that the draft run read the same files as the repo's own run, and no more (a vendored directory counted is the usual sign).
+- **Auto-fix**: where the tool reports its own fix, `tally.py` splits each rule's sites into `safe` (the fix keeps behavior), `unsafe` (it may change it) and the rest, which need a hand.
 - Existing suppressions are debt too: count them (each stack reference names its forms).
 - Each exit of `references/repo.md` § Exits is `closed by <check>` or `open`.
 - Record the commit SHA, every tool version and every command: the plan repeats them.
@@ -116,7 +117,11 @@ Done when `rows.py check <plan> <references read>` passes, and `rows.py keys <st
 
 ### 7. Report
 
-Tell the user: the knobs as set, the rules flipped, the debt table (largest first), the plan's path, the decisions waiting on them, and the drift found against the references (versions, names added, renamed, removed, tools found), with the path of `reference-drift.md`.
+Tell the user: the knobs as set, the rules flipped, the ten largest rows of the debt table (the rest are in the plan), the plan's path, the decisions waiting on them, and the drift found against the references (versions, names added, renamed, removed, tools found), with the path of `reference-drift.md`.
+
+End on the call to action: the decisions that hold a phase, the earliest held first, each with what it holds; and the phase that can start now, the first in the plan's order with a slice no decision holds, with its first `Measure first` command. Then offer to open the execution track in the repo's tracker, in the language of the plan: one issue per phase, and one per decision that holds a phase, which the phase's issue names as its blocker; a decision that holds nothing stays in the plan. An issue is a handle, and the plan stays the source of truth: its body links the plan's section and repeats the done criterion (a decision's: its question and options), never the counts or the slices, which go stale with the next commit. Opening the issues publishes outside the repo, so it waits for the user's yes; with nobody to answer, or no tracker the agent can reach, the report carries each issue as a draft (title and body) for the human to open. Each issue opened goes in the plan's Progress section, beside its phase.
+
+Done when the report names the first move and every issue is opened or drafted.
 
 ## Knobs
 
@@ -140,14 +145,15 @@ A rule's class carries its fix recipe, so the plan writes one recipe per class i
 
 - **Dropped value**: a value whose flow ends before any reader sees it: an ignored `Result` or error, an error passed up without the context or the identity its caller matches on (`wrapcheck`, `err113`), a floating Promise, a blind `except`, an assignment never read, a write whose outcome nobody checks. Fix: the value reaches its caller or a log line.
 - **Fail fast**: code that hides a failure behind a fallback (a default on a missing value, a condition the types already rule out, a catch that recovers into a wrong state). Fix: remove the fallback; the failure surfaces at the boundary that can act on it.
-- **Escape hatch**: the checker is told to look away: `any`, a cast, a non-null `!`, `unwrap`, a bare `type: ignore`. Fix: parse, don't validate: narrow the value once, at the boundary, into a type the checker reads.
-- **Capability**: a call allowed in one place only: `print` or `console` outside the output or logging module, a process spawn outside the module that owns spawns, `exit` outside `main`, the environment written outside startup. Fix: route the call through the module that owns it; that module carries the one exception, with its reason. When no module owns the capability yet, the rule is `decision first`.
-- **Shape**: complexity, nesting depth, argument count, file size, a duplicated block. Fix: let the data structure the program (a table of cases, a `match` on a tuple), guard clauses, a split along a responsibility the code already has. A file over the size limit is a god file and a function over the complexity limit a god function: each is split by the responsibilities it already carries, one module or function per responsibility. Don't patch bad code, rewrite it. A clone is one rule written twice, or two rules that only look alike: one rule becomes one function or constant named for that rule; two rules stay two, and the clone carries the tool's ignore marker with the reason they change for different reasons.
+- **Escape hatch**: the checker is told to look away: `any`, a cast, a non-null `!`, `unwrap`, a bare `type: ignore`, a missing annotation the checker reads as `Any`. Fix: parse, don't validate: narrow the value once, at the boundary, into a type the checker reads.
+- **Capability**: a call allowed in one place only: `print` or `console` outside the output or logging module, a process spawn outside the module that owns spawns, `exit` outside `main`, the environment written outside startup. A command-line script owns its own stdout: its `print` is the output, allowed by a per-file setting with its reason. Fix: route the call through the module that owns it; that module carries the one exception, with its reason. When no module owns the capability yet, the rule is `decision first`.
+- **Shape**: complexity, nesting depth, argument count, file size, a duplicated block. Fix: the cause of the smell, never just its number: let the data structure the program (a table of cases, a `match` on a tuple), guard clauses, a split along a responsibility the code already has. A file over the size limit is a god file and a function over the complexity limit a god function: each is split by the responsibilities it already carries, one module or function per responsibility. Don't patch bad code, rewrite it. A clone is one rule written twice, or two rules that only look alike: one rule becomes one function or constant named for that rule; two rules stay two, and the clone carries the tool's ignore marker with the reason they change for different reasons.
 - **Surface**: format, naming, import order, the scope of a name (a global, a shadowed variable, a named return). Fix: the tool's own command, or a rename or move at the site with no behavior change.
 
 ## Strategies
 
 - **On now.** 0 sites: step 5 flips it. A group goes on now as a whole, with its debt list: the rules with no site are on from that commit, and each later fix only deletes a line.
+- **Fix by command.** The `safe` sites: the tool's own fix, one commit per rule with the command in its message, the gate green after it (with no gate command yet, the tests and the draft run). The whole draft stays on and only the fix narrows (ruff: `--fix --unfixable ALL --fixable <rule>`): a run with one rule selected reads every other suppression as unused and deletes it. Fixes interact (a rewrite leaves an import unused): run the draft again after each, and the sites it adds are the next command's. A fix moves lines, so compare per-rule counts, not `tally.py diff`. The `unsafe` sites go to Fix then flip: the fix is a draft, each diff read against the class recipe, and the recipe wins where they differ (an unsafe fix that deletes a `print` where Capability routes it to the log, or renames an unused value to `_x`, which hides a dropped value).
 - **Fix then flip.** Sites with a local fix (a rewrite at the site, no design change). Cut the sites into _slices_ by scope (a crate, a package, a directory) small enough for one review. Where the config can scope a rule (overrides, per-file settings), flip it per scope as each scope reaches 0, so the gain is locked early. Where one table governs every scope (a workspace lint table), measure with the draft and flip once, in the slice that removes the last site.
 - **Baseline ratchet.** Sites whose fix is a redesign: complexity, file size, type escapes. A committed baseline lists every offender by identity (path and name, never a line number) and value. The check fails when an offender is missing from the baseline, when a value rises above its entry, and when a value falls or an entry is gone and the baseline was not updated: the last rule makes each fix lower the baseline. A renamed or moved offender is new, so it must pass.
 - **Count ratchet.** Sites whose identity moves when the code moves, such as the clones of a duplication tool. The check that refuses a new site stays (jscpd against the base branch), and the total is a constant that only goes down: `tally.py <format> <output> --expect N` fails above N and below N, so the change that removes a clone lowers N.
@@ -159,5 +165,5 @@ A rule's class carries its fix recipe, so the plan writes one recipe per class i
 - **Phase 0 is the gate itself**: pinned versions, the one local command, CI running the same checks, no warn level.
 - **A strategy whose every fix writes a shared file** (a baseline) runs first or alone: otherwise every other phase rewrites that file too.
 - **Phases that touch the same files run in sequence**; phases over disjoint code may run side by side.
-- **A mass change made by a command** (a reformat) lands when no long branch is open, and is redone by the command instead of merged by hand.
+- **A mass change made by a command** (a reformat, a fix by command) lands when no long branch is open, and is redone by the command instead of merged by hand.
 - **Cheap phases go early**: few sites with a mechanical fix shrink the noise for the rest.

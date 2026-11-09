@@ -1,6 +1,6 @@
 # Transition plan
 
-The shape of the plan step 5 writes. The plan is read cold by an agent that does not have this skill, so everything it needs is in the plan itself: commands, fix recipes, exception forms, done criteria. The scripts of the skill (`tally.py`, `drift.py`, `debt.py`, `rows.py`) sit next to the plan, so its measure commands run as written.
+The shape of the plan step 6 writes. The plan is read cold by an agent that does not have this skill, so everything it needs is in the plan itself: commands, fix recipes, exception forms, done criteria. The scripts of the skill (`tally.py`, `drift.py`, `debt.py`, `rows.py`) sit next to the plan, so its measure commands run as written.
 
 Fill every section; a section with nothing to say holds `none — <why>`.
 
@@ -67,4 +67,4 @@ The output of `rows.py list <references read>`, each row with its verdict (`on`,
 
 ### Progress
 
-One line per closed phase or slice: date, commit, the new counts.
+One line per phase and decision with its issue when one is open, then one line per closed phase or slice: date, commit, the new counts.
