@@ -59,7 +59,9 @@ Rules with no type information: the `correctness`, `suspicious` and `pedantic` c
 | unicorn | `throw-new-error`, `error-message`, `no-array-sort` (`toSorted`), `prefer-node-protocol`, `no-useless-undefined` |
 | Tests | `no-focused-tests`, `no-disabled-tests`, `expect-expect` |
 | Logs | `no-console`, allowed only in the logging module |
-| Performance | `oxc/no-accumulating-spread` (a spread of the accumulator inside `reduce` or a loop copies it each pass; in the `perf` category, which stays off) |
+| Performance | `oxc/no-accumulating-spread` (class Waste: a spread of the accumulator inside `reduce` or a loop copies it each pass; in the `perf` category, which stays off) |
+
+Conventions (SKILL.md § Rule classes), each on or off by the answer of step 3: `unicorn/prefer-node-protocol`, `unicorn/no-useless-undefined`, `unicorn/explicit-length-check`, `unicorn/no-hex-escape`, `unicorn/escape-case`, `unicorn/prefer-string-replace-all`, `unicorn/prefer-query-selector`, `unicorn/no-negated-condition`, `unicorn/prefer-at`, `unicorn/prefer-dom-node-dataset`, `typescript/no-unnecessary-boolean-literal-compare`; the `style` category stays off. These fail the test, so they are not conventions: `curly` and `unicorn/no-array-callback-reference` are Surface, a form a reader misreads (a line added under a brace-less `if` runs every time; `map(parseInt)` passes the index as the radix); `unicorn/prefer-add-event-listener` is Dropped value (`onclick =` drops the handler set before it); `unicorn/prefer-string-starts-ends-with` is Waste (a regex test pays for the regex engine).
 
 ## Optional family: anti-slop
 
@@ -68,6 +70,7 @@ Rules with no type information: the `correctness`, `suspicious` and `pedantic` c
 - oxlint JS plugins are alpha (oxlint 1.92 docs). The plugin imports `@oxlint/plugins`, pinned at exactly the oxlint version, so a bump moves both.
 - Its rules read the syntax tree and the aliases of one file, with no type checker: they approximate more than the type-aware rules, and miss what crosses an import.
 - Its author states it is a taste. Each rule is taken one at a time, by its class and its count, never the whole set.
+- Measuring it fetches outside code into the scratch folder: step 1 asks the user for the yes, so step 2 measures it and step 3 asks with the counts.
 
 | Rule | Class | Target |
 |---|---|---|

@@ -39,6 +39,8 @@ ban-relative-imports = "all"
 
 Rules `ALL` brings that carry the agent errors: `BLE001` (blind `except`), `S110` (`except: pass`), `ANN401` (`Any`), `T20` (`print`), `ERA001` (commented-out code), `FIX002` (a `TODO` left behind), `PGH003` (bare `type: ignore`), `PGH004` (bare `noqa`), `RUF100` (a `noqa` that suppresses nothing), `FBT` (boolean flags), `ARG` (unused arguments).
 
+Conventions in `ALL` (SKILL.md § Rule classes), each on or off by the answer of step 3: `RET504` to `RET508` (an assignment or an `else` before a `return`), `SIM102`, `SIM103`, `SIM108`, `SIM114`, `PLR5501`, `PLR1714` (one form of a condition for another), `C408`, `C416`, `RUF005` (one form of a collection for another), `PIE790`, `PIE808`, `UP006`, `UP007`, `UP015`, `UP032`, `RUF010` (a spelling the language allows both ways), `ICN001` (an import alias), `Q` (quotes, which the formatter writes), `TD002`, `TD003` (the form of a `TODO`, which `FIX002` refuses anyway), `PT001`, `PT006`, `PT007`, `PT023` (the style of a pytest call). `PERF` and `C419` are Waste. A rule not named here goes by the test of the class, from `ruff rule <code>`.
+
 Ruff's complexity (`C901`) is cyclomatic. For cognitive complexity, the measure that counts nesting, add `complexipy --max-complexity-allowed 10`.
 
 ## Type checker

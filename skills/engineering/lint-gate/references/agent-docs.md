@@ -32,7 +32,7 @@ Written in the language of the repo's docs; the `<...>` filled from this repo, t
 ## Lint gate
 
 - Before you call a change done, run `<gate command | the CI steps, in order, until the gate command exists>`; it passes when <what a pass prints>.
-- While you edit, <the hook runs the fast linters on each file you change: read its output and fix it before you go on | run `<fast command> <files>` on the files you changed>.
+- While you edit, <the hook runs the formatter and the fix command of each convention on, then the fast linters on each file you change: read its output and fix it before you go on | run `<fast command> <files>` on the files you changed>.
 - When a rule fails, fix the cause:
   - an error, a `Result` or a Promise that nobody reads goes to its caller or to the log;
   - a fallback that hides a failure goes away, and the failure reaches `<the boundary that handles it>`;

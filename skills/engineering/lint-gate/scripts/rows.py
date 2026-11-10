@@ -22,6 +22,11 @@ verdict is one of:
   out — <why>               a row of a "Do not turn on" table, kept off
   not measured — <why>      a knob whose measure needs what the run lacks
 
+A knob (a row of SKILL.md's Knobs table) and a row of an optional family (a
+table under a heading that names an optional family) are asked with their
+data, so their `decision` verdict carries a count after its id
+(`decision — D14, sites 197`); a bare `decision — D14` fails.
+
 `check` reports the rows with no line, the lines with no valid verdict, and
 the lines that name a row no reference has (a reference changed).
 
@@ -57,12 +62,17 @@ def clean(cell: str) -> str:
     return re.sub(r"\s+", " ", cell).strip()
 
 
-def rows_of(path: Path) -> list[str]:
+def rows_of(path: Path, measured: set[str] | None = None) -> list[str]:
+    """The rows of a reference; `measured` gathers those asked with their data:
+    every knob, and every row under a heading that names an optional family."""
     stem = "knobs" if path.name == "SKILL.md" else path.stem
     lines = path.read_text(encoding="utf-8-sig").splitlines()
     out: list[str] = []
+    family = False
     i = 0
     while i < len(lines):
+        if lines[i].startswith("#"):
+            family = bool(re.search(r"optional famil", lines[i], re.I))
         if lines[i].startswith("|") and i + 1 < len(lines) and _SEP.match(lines[i + 1]):
             head = clean(cells(lines[i])[0])
             i += 2
@@ -73,6 +83,8 @@ def rows_of(path: Path) -> list[str]:
                     rid = f"{stem}: {first} ({head})"
                 if first:
                     out.append(rid)
+                    if measured is not None and (stem == "knobs" or family):
+                        measured.add(rid)
                 i += 1
         else:
             i += 1
@@ -136,6 +148,8 @@ def keys(argv: list[str]) -> int:
 
 
 def main() -> int:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
     if len(sys.argv) >= 2 and sys.argv[1] == "keys":
         return keys(sys.argv[2:])
     if len(sys.argv) < 3 or sys.argv[1] not in ("list", "check"):
@@ -148,7 +162,8 @@ def main() -> int:
                 print(f"| {rid} | |")
         return 0
     plan, refs = Path(sys.argv[2]), [Path(r) for r in sys.argv[3:]]
-    want = [rid for r in refs for rid in rows_of(r)]
+    measured: set[str] = set()
+    want = [rid for r in refs for rid in rows_of(r, measured)]
     got = coverage(plan)
     if not got:
         print(f"{plan}: no `## Coverage` table")
@@ -156,11 +171,14 @@ def main() -> int:
     missing = [r for r in want if r not in got]
     bad = [f"{r}: {got[r]!r}" for r in want if r in got and not _VERDICT.match(got[r])]
     stale = [r for r in got if r not in want]
-    for label, items in (("no line", missing), ("no valid verdict", bad), ("not a row of the references", stale)):
+    blind = [f"{r}: {got[r]!r}" for r in want if r in measured and r in got
+             and got[r].startswith("decision") and not re.search(r"\d", re.sub(r"^decision — \S+", "", got[r]))]
+    for label, items in (("no line", missing), ("no valid verdict", bad), ("not a row of the references", stale),
+                        ("a decision with no count (the question carries its data)", blind)):
         for item in items:
             print(f"{label}: {item}")
     print(f"{len(want)} rows, {len(want) - len(missing) - len(bad)} with a verdict")
-    return 1 if missing or bad or stale else 0
+    return 1 if missing or bad or stale or blind else 0
 
 
 if __name__ == "__main__":

@@ -23,7 +23,7 @@ Every tool approximates: no checker decides a semantic property exactly, so each
 
 One tool per property. When two tools cover one property (oxlint and ESLint, mypy and pyright, two complexity scores), the repo keeps the one it has. A switch is a `decision` backed by a measure on this repo: the run time of each, and the sites each finds that the other misses. A tool's merits come from that measure, never from memory.
 
-The target only moves up. A target rule that is pure noise for this repo is turned off in the config with its reason beside it, and listed for the human as a `decision`.
+**A rule earns its place by the defect it prevents**, and its class (§ Rule classes) names that defect. A rule that prevents none, a choice between forms that behave the same, is a Convention: the repo chooses it in step 3, the target does not impose it. Hard where there is a defect, asked where there is only a taste. On every other class the target only moves up: a target rule that is pure noise for this repo is turned off in the config with its reason beside it, and listed for the human as a `decision`.
 
 **Close the exits.** An exit is a way to turn the gate green without fixing the code: a warn level, a bypass flag, an unasked edit to a config or a debt list, a blanket suppression, a path no check reads, a skipped or weakened test. Each exit gets a check (`references/repo.md` § Exits); an exit no tool can close is listed for the human, never left silent.
 
@@ -39,7 +39,9 @@ For each stack in the repo: its tools, their versions and whether each is pinned
 
 The stacks with a target are Rust, TypeScript, Python and Go. Any other stack gets the gate properties and `references/repo.md`, and the report says it has no target reference.
 
-Done when every stack has a row, every CI check is `local: <command>` or `CI only`, and every agent-doc rule is `checked by <check>` or `advice`.
+An optional family whose measure brings outside code into the scratch folder (anti-slop: `references/typescript.md` § Optional family) is named to the user now, with its source and the commit to fetch, so step 2 can measure it: the fetch waits for their yes. With nobody to answer, nothing is fetched, and its rows read `not measured — no yes to fetch outside code`.
+
+Done when every stack has a row, every CI check is `local: <command>` or `CI only`, every agent-doc rule is `checked by <check>` or `advice`, and each family that fetches code has the user's yes or no.
 
 ### 2. Measure
 
@@ -73,20 +75,22 @@ For each knob (§ Knobs), measure its _curve_, the debt at each candidate value:
 - Each exit of `references/repo.md` § Exits is `closed by <check>` or `open`.
 - Record the commit SHA, every tool version and every command: the plan repeats them.
 
-Done when `drift.py age` ran over every reference read, and each `research: required` has its harvest lines; `drift.py check` passes on every draft; every row of every reference read, and every added rule taken in, has one of the verdicts `rows.py` accepts (`sites N`, `on`, `phase N`, `closed by <check>`, `open`, `decision — <question>`, `n/a — <why>`, `out — <why>`), sites split production and test, per scope; and every knob has its curve. Run `tally.py` from the repo root: it makes paths relative to the current folder, and `--scope-depth` groups by them. `scripts/rows.py list <references read>` prints those rows as the Coverage table of the plan; a row is never skipped in silence.
+Done when `drift.py age` ran over every reference read, and each `research: required` has its harvest lines; `drift.py check` passes on every draft; every row of every reference read, and every added rule taken in, has one of the verdicts `rows.py` accepts (`sites N`, `on`, `phase N`, `closed by <check>`, `open`, `decision — <question>`, `n/a — <why>`, `out — <why>`), sites split production and test, per scope; and every knob has its curve, an optional family included: its curve is its counts, rule by rule. Run `tally.py` from the repo root: it makes paths relative to the current folder, and `--scope-depth` groups by them. `scripts/rows.py list <this skill's SKILL.md> <references read>` prints those rows, the knobs first, as the Coverage table of the plan; a row is never skipped in silence, and a knob or a family is never a `decision` with no count: the question carries its data.
 
 ### 3. Set the tightness
 
 Interview the developer in one round, after the measure, so every question carries its data:
 
 - **A knob** shows its curve, the reference value as the recommendation, and the tightest value that costs nothing today. It asks two things apart: the _end state_ and the _pace_. A large debt is a pace answer (a ceiling in steps), not a reason for a looser end state; an end state looser than the reference goes in the plan with its reason.
+- **An optional family** shows its counts rule by rule, and the question is which of its rules go on, each with its class.
 - **A decision** names the options and what each costs, with a recommendation.
+- **The conventions**, one question for all of them: a table of each Convention rule with sites, its count, and how many of them are `safe`. The question says what a convention buys: one form for every reader, never a defect avoided. The recommendation: on, as Fix by command, when every site is `safe`, and its fix command then runs in the fast loop beside the formatter, so the agent never spends a turn on it; off otherwise, under `noise: convention (<Dn>)`. The developer may take them one by one.
 - **ast-grep**, two questions (`references/repo.md` § ast-grep): for the agent's navigation, in every repo, with the measured gain; for gate rules, when step 1 found candidates, each draft rule with its sites and its probe count.
 - The seven gate properties are the gate itself, not knobs: they stay out of the interview.
 
 With nobody to answer (a headless run), take the reference values and the recommendations, mark each `default taken` in the plan, and list beside each knob the tightest value that costs nothing, for the developer to take later. The answers land in the drafts; the plan's Target section records each choice with its reason. Measure again every rule whose knob moved.
 
-Done when every knob has an end state and a pace, every decision has an answer or `default taken`, and the counts match the chosen values.
+Done when every knob has an end state and a pace, every decision has an answer or `default taken`, every Convention rule with sites is on or off, and the counts match the chosen values.
 
 ### 4. Classify
 
@@ -116,11 +120,11 @@ When any target rule is not yet an error, write the plan and its evidence from `
 
 Write the record beside the plan, the base of every burndown (`references/burndown.md`): the drafts are in `lint-drafts/` (step 5; excluded like the scripts' copy), each measure command pointed at them and run from the repo root (a draft that resolves paths from its own folder reads the repo's: golangci-lint `run.relative-path-mode: wd`; the draft run reads the same files as the repo's run); a path to the scratch folder in a command is written `$SC`; only a run whose tool the repo pins goes in the record, the others are named in the evidence as not tracked; write the phases as JSON, each rule with sites named as `tally.py` prints it, to its phase id as the plan's heading names it, and the layout (`transition-plan.md` § The state); and run `progress.py record lint-record.json --sha <the measured commit> --date <date> --phases <phases.json> --layout <layout.json> --run <tool> <tally json> "<command>" ... --tool <tool>=<version> ... --draft <each draft>`. Add `progress.py check <record> --plan <plan>` to the gate and to CI.
 
-Done when `rows.py check <evidence> <references read>` and `progress.py check <record> --plan <plan>` pass, and `rows.py keys <stack references> --in <the repo's configs> <plan>` names every key of the target configs; every rule not yet on sits in exactly one phase with its count, strategy, fix recipe and done criterion; every `decision` is listed for the human; and the plan runs cold, by an agent that does not have this skill.
+Done when `rows.py check <evidence> <this skill's SKILL.md> <references read>` and `progress.py check <record> --plan <plan>` pass, and `rows.py keys <stack references> --in <the repo's configs> <plan>` names every key of the target configs; every rule not yet on sits in exactly one phase with its count, strategy, fix recipe and done criterion; every `decision` is listed for the human; and the plan runs cold, by an agent that does not have this skill.
 
 ### 7. Report
 
-Tell the user: the knobs as set, the rules flipped, the ten largest rows of the debt table (the rest are in the plan), the plan's path, the decisions waiting on them, and the drift found against the references (versions, names added, renamed, removed, tools found), with the path of `reference-drift.md`.
+Tell the user: the knobs as set, the rules flipped, the ten largest rows of the debt table outside Convention, then the conventions in one line (rules on, rules off, sites) (the rest are in the plan), the plan's path, the decisions waiting on them, and the drift found against the references (versions, names added, renamed, removed, tools found), with the path of `reference-drift.md`.
 
 End on the call to action: the decisions that hold a phase, the earliest held first, each with what it holds; and the phases that can start now, one per lane: the first phase of the lane not closed, once each phase its Lane field waits for is closed and at least one of its slices waits on no decision, each with its first `Measure first` command. Then offer to open the execution track in the repo's tracker, in the language of the plan: one issue per phase, and one per decision that holds a phase or a slice; a phase's issue names its blockers: the phases its Lane field waits for, and each decision that holds it or one of its slices; a decision that holds nothing stays in the plan. An issue is a handle, and the plan stays the source of truth: its body links the plan's section and repeats the done criterion (a decision's: its question and options), never the counts or the slices, which go stale with the next commit. Opening the issues publishes outside the repo, so it waits for the user's yes; with nobody to answer, or no tracker the agent can reach, the report carries each issue as a draft (title and body) for the human to open. Each issue opened goes in the history: `progress.py issue <record> <phase or Dn> <url>`.
 
@@ -140,7 +144,11 @@ The numeric limits and the optional families: the part of the target the develop
 | Clone size | 50 tokens and 5 lines (`minTokens`, `minLines` of jscpd) | `curve` of the jscpd run at `--min-tokens 30` |
 | Inline test block | no reference | a count of test blocks per size |
 | Coverage of the diff | no reference | the coverage tool's report on the last changes, or `not measured — <why>` when it needs a toolchain change |
-| Optional families | `clippy::pedantic`; docs on a published library's public API; `indexing_slicing` in parsing code; the anti-slop rules (TypeScript); mutation testing on the diff | the counts from step 2 |
+| Optional family: `clippy::pedantic` | on, with its debt list; its Convention rules go to the conventions question | the count of each of its lints |
+| Optional family: docs on the public API | on for a published library only | the count of the missing docs on its public items |
+| Optional family: `indexing_slicing` in parsing code | on in the crates that parse outside data | the count per crate |
+| Optional family: anti-slop (TypeScript) | the targets of `typescript.md` § Optional family, rule by rule | the count of each rule, once step 1 has the yes to fetch it |
+| Optional family: mutation testing on the diff | on in CI for the changed code | the missed mutants of a run on the last changes |
 
 ## Rule classes
 
@@ -151,7 +159,9 @@ A rule's class carries its fix recipe, so the plan writes one recipe per class i
 - **Escape hatch**: the checker is told to look away: `any`, a cast, a non-null `!`, `unwrap`, a bare `type: ignore`, a missing annotation the checker reads as `Any`. Fix: parse, don't validate: narrow the value once, at the boundary, into a type the checker reads.
 - **Capability**: a call allowed in one place only: `print` or `console` outside the output or logging module, a process spawn outside the module that owns spawns, `exit` outside `main`, the environment written outside startup. A command-line script owns its own stdout: its `print` is the output, allowed by a per-file setting with its reason. Fix: route the call through the module that owns it; that module carries the one exception, with its reason. When no module owns the capability yet, the rule is `decision first`.
 - **Shape**: complexity, nesting depth, argument count, file size, a duplicated block. Fix: the cause of the smell, never just its number: let the data structure the program (a table of cases, a `match` on a tuple), guard clauses, a split along a responsibility the code already has. A file over the size limit is a god file and a function over the complexity limit a god function: each is split by the responsibilities it already carries, one module or function per responsibility. Don't patch bad code, rewrite it. A clone is one rule written twice, or two rules that only look alike: one rule becomes one function or constant named for that rule; two rules stay two, and the clone carries the tool's ignore marker with the reason they change for different reasons.
-- **Surface**: format, naming, import order, the scope of a name (a global, a shadowed variable, a named return). Fix: the tool's own command, or a rename or move at the site with no behavior change.
+- **Surface**: format, naming, import order, the scope of a name (a global, a shadowed variable, a named return): a form a reader can misread. Fix: the tool's own command, or a rename or move at the site with no behavior change.
+- **Waste**: a cost paid for nothing: an allocation, a copy or a pass the cheaper form avoids (a clone where a borrow serves in Rust, a spread of the accumulator inside a loop in TypeScript, a list built by `append` in a loop in Python, `fmt.Sprintf` for a plain conversion in Go). The result stays the same; only the cost moves. Fix: the cheaper form at the site; a fix that changes a public signature is `decision first`.
+- **Convention**: a choice between forms that behave the same and cost the same: `to_owned()` or `to_string()` on a `&str` in Rust, `arr.at(-1)` or `arr[arr.length - 1]` in TypeScript, `dict()` or `{}` in Python, `for i := range n` or a counted loop in Go. The test of the class: no reader, human or agent, writes a bug because the other form is there, and no run pays more for it. A rule that fails the test has another class (`curly` does: a line added under a brace-less `if` runs every time). A stack reference names the conventions of each group its target turns on whole, so their class is the same in every run; any other rule goes by the test, from the tool's own description. Its gain is consistency, so the repo chooses it (step 3). Fix: the tool's own command, which then runs beside the formatter.
 
 ## Strategies
 

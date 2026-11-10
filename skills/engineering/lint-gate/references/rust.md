@@ -39,12 +39,13 @@ as_conversions = "deny"
 allow_attributes = "deny"              # #[expect] fails when it suppresses nothing
 allow_attributes_without_reason = "deny"
 undocumented_unsafe_blocks = "deny"
-clone_on_ref_ptr = "deny"
-str_to_string = "deny"
 tests_outside_test_module = "deny"
-mod_module_files = "deny"              # one style of module file
 exit = "deny"
 mem_forget = "deny"
+# conventions (§ Conventions): on only by the answer of step 3
+clone_on_ref_ptr = "deny"             # Arc::clone(&x) for x.clone()
+str_to_string = "deny"                # to_owned() for to_string() on a &str
+mod_module_files = "deny"             # one style of module file
 # pedantic noise, off with a reason:
 must_use_candidate = "allow"           # fires on every pure fn; #[must_use] where ignoring is a bug
 missing_errors_doc = "allow"           # docs on the public API of a published library only
@@ -123,6 +124,12 @@ python tally.py diff prod.json all.json        # the test sites
 ## Exceptions
 
 `#[expect(clippy::<lint>, reason = "<why>")]` on the item. A lint that fires on one platform only: `#[cfg_attr(<platform>, expect(clippy::<lint>, reason = "..."))]`. `allow_attributes` refuses a bare `#[allow]`, which outlives the code it excused.
+
+## Conventions
+
+The lints of this target that pick one of two forms with the same behavior and the same cost (SKILL.md § Rule classes, Convention): the restriction lints under `# conventions` above, `unused_qualifications` of rustc, and these of `pedantic`, which goes on as a group: `doc_markdown`, `redundant_closure_for_method_calls`, `semicolon_if_nothing_returned`, `unreadable_literal`, `uninlined_format_args`, `single_match_else`, `if_not_else`, `manual_let_else`, `map_unwrap_or`, `unnested_or_patterns`, `ignored_unit_patterns`, `manual_string_new`, `default_trait_access`, `explicit_iter_loop`, `explicit_into_iter_loop`, `items_after_statements`, `needless_continue`, `needless_raw_string_hashes`, `range_plus_one`, `inconsistent_struct_constructor`. A convention off sits in the debt block under `noise: convention (<Dn>)`. Most have a machine-applicable fix: `cargo clippy --fix` applies the `safe` sites.
+
+A pedantic lint not named here goes by the test of the class, from `cargo clippy --explain <lint>`: `cast_possible_truncation` and `case_sensitive_file_extension_comparisons` change a result, so they are not conventions; `needless_pass_by_value` and `format_push_string` are Waste.
 
 ## Do not turn on
 

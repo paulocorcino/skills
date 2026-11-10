@@ -75,6 +75,11 @@ linters:
         linters: [err113, wrapcheck]
 formatters:
   enable: [gofumpt, goimports]
+# conventions (SKILL.md § Rule classes), each on or off by the answer of step 3:
+# whitespace, usestdlibvars, intrange, copyloopvar, canonicalheader, decorder, grouper,
+# funcorder, inamedparam, tagalign, embeddedstructfieldcheck, and the gocritic checks
+# tagged `style`. Waste: perfsprint, prealloc, mirror. Surface, not conventions:
+# nonamedreturns, nakedret, errname (a name or a scope a reader can misread).
 issues:
   max-issues-per-linter: 0
   max-same-issues: 0

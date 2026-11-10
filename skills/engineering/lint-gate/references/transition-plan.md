@@ -62,6 +62,8 @@ Copy this section into the plan as it is:
   - **Capability** (`print`/`console`, a spawn, `exit`, an environment write outside the module that owns it): the call goes through the owning module, which carries the one exception with its reason.
   - **Shape** (complexity, depth, arguments, size): let the data structure the program: guard clauses and early returns, a table of cases, a `match`/`switch` over a tuple, an iterator in place of a loop with state, or a split along a responsibility the code already has. A file over the size limit is a god file, a function over the complexity limit a god function: split each by the responsibilities it already carries, one module or function per responsibility. Don't patch bad code, rewrite it: helpers that follow no responsibility are not a fix. A clone: one rule written twice becomes one function or constant named for the rule; two rules that only look alike stay two, and the clone carries the ignore marker with the reason they change for different reasons.
   - **Surface** (format, naming, imports): the tool's own command, in a commit of its own.
+  - **Waste** (a cost paid for nothing: an extra allocation, a clone, a copy): the cheaper form at the site, with the same result; a change to a public signature waits for its decision.
+  - **Convention** (one of two forms that behave the same): the tool's own command, in a commit of its own, and the command then runs in the edit loop beside the formatter. It is a form, not a defect: a site of it is never a reason to rewrite the code around it.
 - An exception is the last resort: inline, the rule named, and a reason that names where the rule's approximation is wrong here (the false positive), or the design fact that makes compliance impossible. "To pass the check" is not a reason. Each exception is counted by a ratchet.
 - A test is never weakened, skipped or deleted to turn the gate green, and a hook is never bypassed.
 - A baseline or a ratchet constant only goes down, in the commit that removed the sites. It rises only in a move: the commit takes at least as many sites off a debt list as it adds exceptions, and its message gives both counts.
@@ -79,7 +81,7 @@ The plan's last line, after Fix discipline:
 
 ### Measured
 
-The commit SHA, the date, each tool and its version, and every command used to measure, with its `tally.py` invocation; the commands read the drafts in `lint-drafts/`, and the record holds the same measure for the burndown. Then the debt table, largest first:
+The commit SHA, the date, each tool and its version, and every command used to measure, with its `tally.py` invocation; the commands read the drafts in `lint-drafts/`, and the record holds the same measure for the burndown. Then the debt table, by weight: the defect classes (Dropped value, Fail fast, Escape hatch, Capability) first, then Shape, Surface and Waste, then Convention, each group largest first:
 
 | Rule | Tool | Class | Production | Test | Scopes | Strategy | Phase |
 |---|---|---|---|---|---|---|---|
@@ -88,7 +90,7 @@ Then the rules that are `n/a` with their reasons, and the existing suppressions 
 
 ### Coverage
 
-The output of `rows.py list <references read>`, each row with its verdict (`on`, `sites N`, `phase N`, `closed by <check>`, `open`, `decision — <Dn>`, `n/a — <why>`, `out — <why>`). `rows.py check` holds it: a row with no verdict fails.
+The output of `rows.py list <the skill's SKILL.md> <references read>`, the knobs first, each row with its verdict (`on`, `sites N`, `phase N`, `closed by <check>`, `open`, `decision — <Dn>`, `n/a — <why>`, `out — <why>`, `not measured — <why>`); a knob or an optional family that waits on a decision carries its count (`decision — D14, sites 197`). `rows.py check` holds it: a row with no verdict fails.
 
 ## The state
 
