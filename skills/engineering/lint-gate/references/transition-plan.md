@@ -1,6 +1,6 @@
 # Transition plan
 
-The shape of what step 6 writes. The plan is read cold by an agent that does not have this skill, so everything it needs is beside it: commands, fix recipes, exception forms, done criteria. The scripts of the skill (`tally.py`, `drift.py`, `debt.py`, `rows.py`, `progress.py`) sit next to the plan, so its commands run as written.
+The shape of what step 6 writes. The plan is read cold by an agent that does not have this skill, so everything it needs is beside it: commands, fix recipes, exception forms, done criteria. The skill's `scripts/` folder sits next to the plan, so its commands run as written.
 
 Step 6 writes three things, one per reader, so the file an agent reads to work a phase stays small however large the repo:
 
@@ -16,9 +16,11 @@ Fill every section; a section with nothing to say holds `none — <why>`.
 
 Copy this section into the plan as it is, with the paths of this repo:
 
+- Pick the work: `python <scripts>/progress.py next <record>` prints the phases that can start, the phases that wait and for what, and the open decisions that hold a phase. A phase it lists under an open decision starts with the slices that decision does not hold.
 - Work one phase: `python <scripts>/progress.py show <record> <phase id> --plan <this plan>` prints its section with its state: the phases it waits for, its counts at the last point, the decisions that hold it.
-- Record each change of state with its command, which appends to the history: a decision answered, `progress.py decide <record> <Dn> "<answer>" --date <date>`; an issue opened, `progress.py issue <record> <phase or Dn> <url> --date <date>`; a slice landed or a rule flipped, `progress.py note <record> "<what>" --date <date>`. `progress.py log <record>` prints the state.
-- The plan's text changes only when the plan changes. `progress.py check <record> --plan <this plan>` runs in the gate: it fails on a section missing, a phase heading with no phase in the record or the reverse, and a plan whose last line is not the end marker.
+- Record each change of state with its command, which appends to the history: a decision answered, `progress.py decide <record> <Dn> "<answer>" --date <date>`; an issue opened, `progress.py issue <record> <phase or Dn> <url> --date <date>`; a slice landed or a rule flipped, `progress.py note <record> "<what>" --date <date>`; a phase closed, `progress.py close <record> <phase id> "<why>" --date <date>`. `progress.py log <record>` prints the state.
+- A phase with rules closes by its counts, at the next burndown point: every rule at 0 and flipped. To take a point, run each command `progress.py commands <record>` prints, tally its output (`tally.py <format> <output> --json <run>.json`), then `progress.py point <record> --run <run> <run>.json ... --tool <tool>=<version> ... --config <each config with a debt list> --sha <HEAD> --date <date> --append`. `close` is for the two phases the counts cannot close: one with no rule (Phase 0), once its Done when holds, and one whose last sites sit in a slice a decision holds (§ Phases, Lane).
+- The plan's text changes only when the plan changes. `progress.py check <record> --plan <this plan>` runs in the gate: it fails on a section missing, a phase heading with no phase in the record or the reverse, and a plan whose last line is not the end marker. `rows.py check <evidence> --record <record>` runs there too: it fails on a verdict of no known form, and on a debt table that differs from the record.
 
 ### Target
 
@@ -27,7 +29,7 @@ One paragraph: the end state of the gate (every rule an error, pinned tools, one
 | Knob | End state | Pace | Curve at the end state | Reason (or `default taken`) |
 |---|---|---|---|---|
 
-Then the target configs in full, as they will be when the last phase closes.
+Then the target configs, named file by file: they are the drafts in `lint-drafts/`, each as its config will be when the last phase closes. The plan points at them and holds no copy. A setting of the end state that no draft can hold (a CI flag, a repository setting) is written here.
 
 ### Decisions for the human
 
@@ -35,12 +37,12 @@ Each `decision`, under its id (`D1`, `D2`): the rule, the question, the options 
 
 ### Phases
 
-In the order of `## Phase order` of the skill, restated here with the reason for this repo's order, and the lanes: each lane, its phases in order, and the files they share. Phase 0 is the gate itself when it is not yet complete. Each phase sits under a heading `### Phase <id> — <title>`, its id as the record's layout names it, and holds:
+In the order of `## Phase order` of the skill, restated here with the reason for this repo's order, and the lanes: each lane, its phases in order, and the files they share. Phase 0 holds only what every lane stands on, and the rest of the gate work is the phases of the `gate` lane (`## Phase order`); a Phase 0 that step 5 left done says so in its Done when. Each phase sits under a heading `### Phase <id> — <title>`, its id as the record's layout names it, and holds:
 
 - **Lane**: its lane and the phases it waits for (`Rust, after Phase 2`; the first of a lane: `Rust, after Phase 1`; a phase across lanes: `own lane, after Phases 4 and 8`). A phase starts when each phase it waits for is closed. A phase is closed when its Done when holds, or when all that is left of it is a slice held by a decision that edits no file of the waiting phase (a repository setting, a threshold): that slice stays open on its own and holds nothing after it.
 - **Rules**: the rules it takes to error, and the strategy of each.
 - **Measure first**: the commands that re-count its sites at the start of the phase. The code has moved since the plan was written; the slices follow the new count.
-- **Slices**: one row per slice (scope, sites per rule), each small enough for one review, each leaving the gate green. When the slices repeat one recipe over several scopes, the first is the tracer bullet: the smallest scope that takes every part of the recipe end to end, listed first, and the others start after it lands. Slices that are distinct tasks (the items of Phase 0) have no tracer. Slices of one phase may be worked side by side and land one at a time, each rebased on the last.
+- **Slices**: one row per slice (scope, sites per rule), each small enough for one review, each leaving the gate green. When the slices repeat one recipe over several scopes, the first is the tracer bullet: the smallest scope that takes every part of the recipe end to end, listed first, and the others start after it lands. Slices that are distinct tasks (the items of a gate phase) have no tracer. Slices of one phase may be worked side by side and land one at a time, each rebased on the last.
 - **How a site is fixed**: the recipe of each rule's class (§ Fix discipline), plus what a rule needs beyond it, and when the exception form is allowed.
 - **Ratchet**: the baseline or count it adds or lowers, and the test that checks it.
 - **Agent docs**: the lines of the canonical agent doc that change in the commit that turns the rule on: the `advice` line it now checks becomes the behavior, and the recipe of its class joins the lint gate block when it is the first rule of that class. No rule name, number or version goes in.
@@ -86,11 +88,13 @@ The commit SHA, the date, each tool and its version, and every command used to m
 | Rule | Tool | Class | Production | Test | Scopes | Strategy | Phase |
 |---|---|---|---|---|---|---|---|
 
+Each rule is named as `tally.py` prints it, its Tool the name of its run in the record, and its Production plus Test the count the record holds: `rows.py check --record` compares the table with the record, row by row.
+
 Then the rules that are `n/a` with their reasons, and the existing suppressions per form.
 
 ### Coverage
 
-The output of `rows.py list <the skill's SKILL.md> <references read>`, the knobs first, each row with its verdict (`on`, `sites N`, `phase N`, `closed by <check>`, `open`, `decision — <Dn>`, `n/a — <why>`, `out — <why>`, `not measured — <why>`); a knob or an optional family that waits on a decision carries its count (`decision — D14, sites 197`). `rows.py check` holds it: a row with no verdict fails.
+The output of `rows.py list <the skill's SKILL.md> <references read>`, the knobs first, each row with its verdict (`on`, `sites N`, `phase N`, `closed by <check>`, `open`, `decision — <Dn>`, `n/a — <why>`, `out — <why>`, `not measured — <why>`); a knob or an optional family that waits on a decision carries its count (`decision — D14, sites 197`). `rows.py check` holds it: a row with no verdict fails, and with `--record` so does a `phase` or `decision` verdict that names none of the layout's. It checks a verdict's form, not its truth: it prints each row left outside the gate (`n/a`, `out`, `not measured`, `open`) with its reason, and the report hands that list to the human.
 
 ## The state
 

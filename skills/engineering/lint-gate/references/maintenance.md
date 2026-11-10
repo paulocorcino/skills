@@ -36,6 +36,11 @@ Runs when the user asks to refresh the skill's references. It is the one time th
 3. Apply each harvest line whose source checks out at the pin. A line whose source does not reproduce is dropped, with the reason in the report.
 4. Rewrite the `As of` line: today's date and the versions checked.
 5. Run `drift.py check` over each target config the reference holds, saved as a draft, and `rows.py list` over the references before and after: the report names the rows added and removed, since every repo's Coverage table changes with them.
-6. Commit in the skill's repository when the user has authorized commits.
+6. Run `python scripts/gate.py`: it holds the skill's own scripts to the Python target at the pins of `python.md` (tests, lint, format, types, complexity), so a pin or a rule that moved in step 4 is met there first. A site it finds is fixed in the scripts by its class recipe; a rule that is noise for them goes off in `scripts/ruff.toml` or `scripts/mypy.ini` with its reason.
+7. Commit in the skill's repository when the user has authorized commits.
 
-Done when `drift.py age` says `research: not required` for every reference, `drift.py check` passes on every target config, and every harvest line is applied or dropped with its reason.
+Done when `drift.py age` says `research: not required` for every reference, `drift.py check` passes on every target config, every harvest line is applied or dropped with its reason, and `scripts/gate.py` is green.
+
+## The scripts
+
+A change to a script, outside a refresh, ends the same way: a test for the behavior it changes in `scripts/tests/`, then `python scripts/gate.py` green. A repo holds a copy of the folder, so a script reads only the standard library and its sibling files.

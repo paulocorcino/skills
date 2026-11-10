@@ -1,0 +1,41 @@
+# The gate of these scripts: the Python target of the skill they belong to.
+# A copy of this folder in a repo is linted by this file, not by the repo's own config.
+line-length = 100
+target-version = "py311"
+
+[lint]
+select = ["ALL"]
+ignore = [
+  # noise: conflict with the formatter
+  "COM812", "ISC001",
+  # noise: docstrings everywhere produce empty ones to pass
+  "D",
+  # noise: a copyright header is a policy, not a defect
+  "CPY",
+  # noise: message style; the exception type carries the meaning
+  "TRY003", "EM101", "EM102",
+  # noise: every literal becomes a constant with no better name
+  "PLR2004",
+  # noise: each file here is a command-line script or its sibling module, run from this folder, never imported as a package
+  "INP001",
+  # noise: the programs spawned are `git` and, in gate.py, `uvx`, found on PATH on every OS, with arguments this code builds
+  "S603", "S607",
+]
+
+[lint.mccabe]
+max-complexity = 10
+
+[lint.pylint]
+max-args = 5
+
+[lint.flake8-tidy-imports]
+ban-relative-imports = "all"
+
+[lint.per-file-ignores]
+# A command-line script owns its stdout: its `print` is its output.
+"*.py" = ["T201"]
+# An entry script says where its sibling files load from, and that a run writes no
+# bytecode beside them, before it imports them.
+"{tally,debt,drift,progress,rows}.py" = ["T201", "E402"]
+# The tests are stdlib unittest, so the copy runs in a repo that has no pytest.
+"tests/*.py" = ["PT009", "PT027"]

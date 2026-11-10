@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
 """Count lint sites per rule from a tool's machine-readable output.
 
-A site is one (rule, file, line, column). Duplicates are dropped: clippy reports
-a site once per target that compiles the file, and a macro can repeat it; ruff
-can report one rule twice at one position (PT018 on `assert a and b and c`).
+A site is one (rule, file, line, column); `formats.py` reads each tool.
 
   tally.py FORMAT OUTPUT [--json OUT.json] [--scope-depth N]
   tally.py diff A.json B.json                  # sites in B that are not in A
@@ -12,8 +10,7 @@ can report one rule twice at one position (PT018 on `assert a and b and c`).
   tally.py sizes [PATH...] --ext .py,.ts [--lines 300,400,500,700] [--width 80,100,120]
   tally.py added FORMAT OUTPUT --base REF [--ignore RULE,RULE]
 
-FORMAT is one of: clippy, oxlint, eslint, ruff, mypy, pyright, golangci, tsc.
-OUTPUT is the file the tool wrote (`-` for stdin).
+OUTPUT is the file the tool wrote (`-` for stdin). FORMAT is one of:
 
   clippy    cargo clippy --message-format=json            (JSON lines)
   oxlint    oxlint --format json
@@ -46,7 +43,9 @@ reports every function with its value; `curve` reads the value from each
 message and counts the sites above each threshold. The messages it reads:
 "(13 > 10)" (ruff), "(23/10)" and "(7/5)" (clippy), "complexity of 13"
 (oxlint, eslint), "complexity 23 of" (gocognit), "but got 7" (revive),
-"too many parameters (6)" (oxlint and eslint `max-params`).
+"too many parameters (6)" and "nested too deeply (4)" (oxlint and eslint
+`max-params`, `max-depth`, `max-statements`; `max-depth` reports each block
+past the limit, so a run at 0 gives the exact count of every limit).
 
 `pattern` counts the lines of the files tracked by git (under PATH, with an
 extension of --ext) that match REGEX: the ratchet of a forbidden pattern no
@@ -66,8 +65,11 @@ the output of a draft run (every rule of the target on, the debt rules too)
 and fails on each site that sits on a line the change adds against REF (the
 merge base: `git merge-base HEAD origin/main`; the working tree counts, so it
 runs before a commit too). A site on an old line is the plan's; a site on a
-new line is the change's. --ignore leaves out rules that report a line the
-change did not write (complexity at the `def`: a baseline holds those).
+new line is the change's. A line the change only moves is an old line: its
+text, layout apart, is among the lines the change removes (a file split, a
+function reordered, a reformat; `added.py` has the rule). --ignore leaves out
+rules that report a line the change did not write (complexity at the `def`: a
+baseline holds those).
 
 Warnings on stderr mean the count is incomplete: the tool reported a parse or
 build error, so part of the code was never checked.
@@ -76,243 +78,105 @@ build error, so part of the code was never checked.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
-import os
 import re
 import subprocess
 import sys
 from collections import defaultdict
-from typing import Iterable, Iterator
+from pathlib import Path
 
-Site = tuple[str, str, int, int]  # rule, file, line, column
-Hit = tuple[str, str, int, int, str]  # a site and its message
-# A parser may yield a sixth field: "safe" when the tool's own fix keeps the
-# behavior, "unsafe" when it may change it, "" when the tool has no fix.
+sys.dont_write_bytecode = True  # a run writes nothing into this folder
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # the sibling files, under `python -I` too
 
+import added
+from formats import PARSERS, Site, hits_of
+from narrow import csv, items, obj, warn
 
-def warn(msg: str) -> None:
-    print(f"warning: {msg}", file=sys.stderr)
-
-
-def norm_path(p: str) -> str:
-    p = p.replace("\\", "/")
-    cwd = os.getcwd().replace("\\", "/").rstrip("/") + "/"
-    if p.lower().startswith(cwd.lower()):
-        p = p[len(cwd):]
-    if p.startswith("./"):
-        p = p[2:]
-    return p
+_PREFIX_HELP = "put before every path (jscpd names files from the scanned folder)"
 
 
-def json_lines(text: str) -> Iterator[dict]:
-    for line in text.splitlines():
-        line = line.strip()
-        if line.startswith("{"):
-            try:
-                yield json.loads(line)
-            except json.JSONDecodeError:
-                continue
+def scope_of(path: str, depth: int) -> str:
+    parts = path.split("/")
+    return "/".join(parts[:depth]) if len(parts) > depth else "/".join(parts[:-1]) or "."
 
 
-def parse_clippy(text: str) -> Iterable[Hit]:
-    for m in json_lines(text):
-        if m.get("reason") == "build-finished" and not m.get("success", True):
-            warn("the build did not finish: crates that failed were not linted")
-        if m.get("reason") != "compiler-message":
-            continue
-        msg = m["message"]
-        code = (msg.get("code") or {}).get("code")
-        text_ = msg.get("message", "")
-        if not code:
-            if msg.get("level") == "error":
-                warn(f"compile error with no code: {text_[:100]}")
-            continue
-        if re.fullmatch(r"E\d{4}", code):
-            warn(f"compile error {code}: the crate did not build, its lints are missing")
-            continue
-        spans = [s for s in msg.get("spans", []) if s.get("is_primary")] or msg.get("spans", [])
-        if not spans:
-            yield code, "(no file)", 0, 0, text_
-            continue
-        s = spans[0]
-        yield code, norm_path(s["file_name"]), s["line_start"], s["column_start"], text_, clippy_fix(msg)
+def _fix_cols(sites: set[Site], fixes: dict[Site, str]) -> str:
+    if not fixes:
+        return ""
+    kinds = [fixes.get(site, "") for site in sites]
+    return f"  {kinds.count('safe'):>4}  {kinds.count('unsafe'):>6}"
 
 
-_CLIPPY_SAFE = {"MachineApplicable"}
-_CLIPPY_UNSAFE = {"MaybeIncorrect", "HasPlaceholders"}
+def _scope_lines(sites: set[Site], depth: int | None, width: int) -> list[str]:
+    if not depth:
+        return []
+    per_scope: dict[str, int] = defaultdict(int)
+    for site in sites:
+        per_scope[scope_of(site[1], depth)] += 1
+    ranked = sorted(per_scope.items(), key=lambda kv: (-kv[1], kv[0]))
+    return [f"  {scope:<{width - 2}}  {n:>6}" for scope, n in ranked]
 
 
-def clippy_fix(msg: dict) -> str:
-    kinds = {sp.get("suggestion_applicability")
-             for m in [msg, *msg.get("children", [])] for sp in m.get("spans", [])}
-    return "safe" if kinds & _CLIPPY_SAFE else "unsafe" if kinds & _CLIPPY_UNSAFE else ""
+def print_table(sites: set[Site], depth: int | None, fixes: dict[Site, str] | None = None) -> None:
+    fixes = fixes or {}
+    by_rule: dict[str, set[Site]] = defaultdict(set)
+    for site in sites:
+        by_rule[site[0]].add(site)
+    rows = sorted(by_rule.items(), key=lambda kv: (-len(kv[1]), kv[0]))
+    width = max([len(rule) for rule, _ in rows] + [4])
+
+    def row(name: str, found: set[Site]) -> str:
+        files = len({site[1] for site in found})
+        return f"{name:<{width}}  {len(found):>6}  {files:>5}{_fix_cols(found, fixes)}"
+
+    head = f"  {'safe':>4}  {'unsafe':>6}" if fixes else ""
+    print(f"{'rule':<{width}}  {'sites':>6}  {'files':>5}{head}")
+    for rule, found in rows:
+        print(row(rule, found))
+        for line in _scope_lines(found, depth, width):
+            print(line)
+    print(row("total", sites))
 
 
-def parse_oxlint(text: str) -> Iterable[Hit]:
-    data = json.loads(text)
-    for d in data.get("diagnostics", []):
-        code = d.get("code") or "(parse error)"
-        if code == "(parse error)":
-            warn(f"diagnostic with no rule in {d.get('filename')}: {d.get('message', '')[:100]}")
-        labels = d.get("labels") or [{}]
-        span = labels[0].get("span", {})
-        yield (code, norm_path(d.get("filename", "(no file)")), span.get("line", 0),
-               span.get("column", 0), d.get("message", ""))
+def dump(sites: set[Site], path: str) -> None:
+    out: dict[str, list[str]] = defaultdict(list)
+    for rule, file, line, col in sorted(sites):
+        out[rule].append(f"{file}:{line}:{col}")
+    with Path(path).open("w", encoding="utf-8", newline="\n") as fh:
+        json.dump(out, fh, indent=1, sort_keys=True)
 
 
-def parse_eslint(text: str) -> Iterable[Hit]:
-    for f in json.loads(text):
-        for m in f.get("messages", []):
-            rule = m.get("ruleId")
-            if rule is None:
-                warn(f"{f.get('filePath')}: {m.get('message', '')[:100]}")
-                rule = "(parse error)" if m.get("fatal") else "(no rule)"
-            yield rule, norm_path(f["filePath"]), m.get("line", 0), m.get("column", 0), m.get("message", "")
+def load(path: str) -> set[Site]:
+    sites: set[Site] = set()
+    for rule, locs in obj(json.loads(Path(path).read_text(encoding="utf-8"))).items():
+        for loc in items(locs):
+            file, line, col = str(loc).rsplit(":", 2)
+            sites.add((rule, file, int(line), int(col)))
+    return sites
 
 
-def parse_ruff(text: str) -> Iterable[Hit]:
-    for d in json.loads(text):
-        code = d.get("code")
-        if code is None:
-            warn(f"{d.get('filename')}: {d.get('message', '')[:100]}")
-            code = "(syntax error)"
-        loc = d.get("location") or {}
-        kind = (d.get("fix") or {}).get("applicability", "")
-        yield (code, norm_path(d["filename"]), loc.get("row", 0), loc.get("column", 0),
-               d.get("message", ""), kind if kind in ("safe", "unsafe") else "")
+def ints(option: str) -> list[int]:
+    return sorted({int(part) for part in csv(option)})
 
 
-def parse_mypy(text: str) -> Iterable[Hit]:
-    for d in json_lines(text):
-        if d.get("severity") == "note":
-            continue
-        code = d.get("code") or "(no code)"
-        if code == "syntax":
-            warn(f"{d.get('file')}: syntax error, the file was not checked")
-        yield code, norm_path(d["file"]), d.get("line", 0), d.get("column", 0), d.get("message", "")
+def ratchet(count: int, expect: int | None) -> int:
+    """Exit 1 unless the count is exactly the constant the ratchet holds."""
+    if expect is None or count == expect:
+        return 0
+    if count > expect:
+        advice = "new debt; fix it, the count does not go up"
+    else:
+        advice = f"the count went down; lower the ratchet to {count} in this change"
+    print(f"ratchet: {count} sites, the ratchet holds {expect}: {advice}")
+    return 1
 
-
-def parse_pyright(text: str) -> Iterable[Hit]:
-    data = json.loads(text)
-    for d in data.get("generalDiagnostics", []):
-        if d.get("severity") == "information":
-            continue
-        start = (d.get("range") or {}).get("start", {})
-        yield (
-            d.get("rule") or "(no rule)",
-            norm_path(d.get("file", "(no file)")),
-            start.get("line", 0) + 1,
-            start.get("character", 0) + 1,
-            d.get("message", ""),
-        )
-
-
-# staticcheck (SA1019, ST1003, QF1001, S1000) and gosec (G104) put their own
-# check id at the start of the text: count those per id, not per linter.
-_GO_CHECK_ID = re.compile(r"^([A-Z]{1,3}\d{3,4})\b")
-# revive (`argument-limit: ...`) and gocritic (`ifElseChain: ...`) start with
-# the name of their rule.
-_GO_RULE_NAME = re.compile(r"^([A-Za-z][\w-]+): ")
-_GO_NAMED_RULES = {"revive", "gocritic"}
-
-
-def parse_golangci(text: str) -> Iterable[Hit]:
-    data = json.loads(text)
-    for i in data.get("Issues") or []:
-        rule = i.get("FromLinter", "(no linter)")
-        pattern = _GO_RULE_NAME if rule in _GO_NAMED_RULES else _GO_CHECK_ID
-        m = pattern.match(i.get("Text", ""))
-        if m:
-            rule = f"{rule}:{m.group(1)}"
-        if rule == "typecheck":
-            warn(f"typecheck: {i.get('Text', '')[:100]} (the package was not linted)")
-        pos = i.get("Pos") or {}
-        yield (rule, norm_path(pos.get("Filename", "(no file)")), pos.get("Line", 0),
-               pos.get("Column", 0), i.get("Text", ""))
-
-
-_TSC_LINE = re.compile(r"^(.+?)\((\d+),(\d+)\): error (TS\d+): ?(.*)")
-
-
-def parse_tsc(text: str) -> Iterable[Hit]:
-    for line in text.splitlines():
-        m = _TSC_LINE.match(line)
-        if m:
-            yield m.group(4), norm_path(m.group(1)), int(m.group(2)), int(m.group(3)), m.group(5)
-
-
-def parse_jscpd(text: str) -> Iterable[Hit]:
-    """One site per clone, at its first file; the message carries its size."""
-    for c in json.loads(text).get("duplicates") or []:
-        first, second = c.get("firstFile") or {}, c.get("secondFile") or {}
-        other = f"{norm_path(second.get('name', '?'))}:{second.get('start', 0)}"
-        # A block copied to several places makes several clones that start at
-        # one place: the column slot holds a stable id of the other copy.
-        yield (
-            f"jscpd:{c.get('format', '?')}",
-            norm_path(first.get("name", "(no file)")),
-            first.get("start", (first.get("startLoc") or {}).get("line", 0)),
-            int(hashlib.sha1(other.encode()).hexdigest()[:8], 16),
-            f"{c.get('tokens', 0)} tokens, {c.get('lines', 0)} lines, "
-            f"also at {other}",
-        )
-
-
-_VULTURE = re.compile(r"^(.+?):(\d+): (unused [a-z ]+?|unreachable code|unsatisfiable \w+ condition)\b(.*)$")
-
-
-def parse_vulture(text: str) -> Iterable[Hit]:
-    for line in text.splitlines():
-        m = _VULTURE.match(line.strip())
-        if m:
-            yield f"vulture:{m.group(3)}", norm_path(m.group(1)), int(m.group(2)), 0, m.group(4).strip()
-
-
-def parse_knip(text: str) -> Iterable[Hit]:
-    """knip --reporter json: one site per unused file, export, type or dependency."""
-    for issue in json.loads(text).get("issues") or []:
-        path = norm_path(issue.get("file", "(no file)"))
-        for kind, items in issue.items():
-            if kind == "file" or not isinstance(items, list):
-                continue
-            for item in items:
-                item = item if isinstance(item, dict) else {"name": str(item)}
-                yield (f"knip:{kind}", path, item.get("line", 0), item.get("col", 0),
-                       str(item.get("name", "")))
-
-
-def parse_astgrep(text: str) -> Iterable[Hit]:
-    """ast-grep scan --json=stream (one object per line), or --json (one array)."""
-    text = text.strip()
-    items = json.loads(text) if text.startswith("[") else [json.loads(l) for l in text.splitlines() if l.strip()]
-    for x in items:
-        start = x.get("range", {}).get("start", {})
-        yield (f"ast-grep:{x.get('ruleId', '?')}", norm_path(x.get("file", "(no file)")),
-               start.get("line", -1) + 1, start.get("column", -1) + 1, x.get("message", ""))
-
-
-PARSERS = {
-    "clippy": parse_clippy,
-    "oxlint": parse_oxlint,
-    "eslint": parse_eslint,
-    "ruff": parse_ruff,
-    "mypy": parse_mypy,
-    "pyright": parse_pyright,
-    "golangci": parse_golangci,
-    "tsc": parse_tsc,
-    "jscpd": parse_jscpd,
-    "vulture": parse_vulture,
-    "knip": parse_knip,
-    "astgrep": parse_astgrep,
-}
 
 _VALUE = [
     re.compile(r"\((\d+)\s*[>/]\s*\d+\)"),
     re.compile(r"complexity of (\d+)"),
     re.compile(r"complexity (\d+) of"),
     re.compile(r"but got (\d+)"),
-    re.compile(r"too many parameters \((\d+)\)"),
+    re.compile(r"too (?:many \w+|deeply) \((\d+)\)"),
     re.compile(r"^(\d+) tokens"),
     re.compile(r"\(complexity: (\d+)\)"),
 ]
@@ -326,121 +190,60 @@ def value_of(msg: str) -> int | None:
     return None
 
 
-def read_output(path: str, fmt: str) -> str:
-    if path == "-":
-        text = sys.stdin.read()
-    else:
-        with open(path, encoding="utf-8-sig", errors="replace") as fh:
-            text = fh.read()
-    # A clean tsc or ast-grep run prints nothing; every other format writes something.
-    if not text.strip() and fmt not in ("tsc", "astgrep"):
-        warn("the output is empty: check that the tool ran")
-        text = "[]" if fmt in ("eslint", "ruff") else ("{}" if fmt in ("oxlint", "pyright", "golangci", "jscpd", "knip") else "")
-    return text
-
-
-def hits_of(fmt: str, path: str, prefix: str = "", fixes: dict[Site, str] | None = None) -> list[Hit]:
-    seen: dict[Site, Hit] = {}
-    for rule, f, line, col, msg, *fix in PARSERS[fmt](read_output(path, fmt)):
-        h = (rule, f"{prefix}{f}" if prefix and not f.startswith("(") else f, line, col, msg)
-        seen.setdefault(h[:4], h)
-        if fixes is not None and fix and fix[0]:
-            fixes.setdefault(h[:4], fix[0])
-    return list(seen.values())
-
-
-def scope_of(path: str, depth: int) -> str:
-    parts = path.split("/")
-    return "/".join(parts[:depth]) if len(parts) > depth else "/".join(parts[:-1]) or "."
-
-
-def print_table(sites: set[Site], depth: int | None, fixes: dict[Site, str] | None = None) -> None:
-    by_rule: dict[str, set[Site]] = defaultdict(set)
-    for s in sites:
-        by_rule[s[0]].add(s)
-    rows = sorted(by_rule.items(), key=lambda kv: (-len(kv[1]), kv[0]))
-    width = max([len(r) for r, _ in rows] + [4])
-
-    def fix_cols(ss: set[Site]) -> str:
-        if not fixes:
-            return ""
-        kinds = [fixes.get(s, "") for s in ss]
-        return f"  {kinds.count('safe'):>4}  {kinds.count('unsafe'):>6}"
-
-    head = f"  {'safe':>4}  {'unsafe':>6}" if fixes else ""
-    print(f"{'rule':<{width}}  {'sites':>6}  {'files':>5}{head}")
-    for rule, ss in rows:
-        print(f"{rule:<{width}}  {len(ss):>6}  {len({s[1] for s in ss}):>5}{fix_cols(ss)}")
-        if depth:
-            per_scope: dict[str, int] = defaultdict(int)
-            for s in ss:
-                per_scope[scope_of(s[1], depth)] += 1
-            for scope, n in sorted(per_scope.items(), key=lambda kv: (-kv[1], kv[0])):
-                print(f"  {scope:<{width - 2}}  {n:>6}")
-    print(f"{'total':<{width}}  {len(sites):>6}  {len({s[1] for s in sites}):>5}{fix_cols(sites)}")
-
-
-def dump(sites: set[Site], path: str) -> None:
-    out: dict[str, list[str]] = defaultdict(list)
-    for rule, f, line, col in sorted(sites):
-        out[rule].append(f"{f}:{line}:{col}")
-    with open(path, "w", encoding="utf-8", newline="\n") as fh:
-        json.dump(out, fh, indent=1, sort_keys=True)
-
-
-def load(path: str) -> set[Site]:
-    with open(path, encoding="utf-8") as fh:
-        data = json.load(fh)
-    sites: set[Site] = set()
-    for rule, locs in data.items():
-        for loc in locs:
-            f, line, col = loc.rsplit(":", 2)
-            sites.add((rule, f, int(line), int(col)))
-    return sites
-
-
-def ints(text: str) -> list[int]:
-    return sorted({int(x) for x in text.split(",") if x.strip()})
-
-
 def cmd_curve(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(prog="tally.py curve")
     ap.add_argument("format", choices=sorted(PARSERS))
     ap.add_argument("output")
     ap.add_argument("--rule", required=True, help="the rule id as the plain tally prints it")
     ap.add_argument("--at", default="5,8,10,12,15,20,30,50")
-    ap.add_argument("--prefix", default="", help="put before every path (jscpd names files from the scanned folder)")
+    ap.add_argument("--prefix", default="", help=_PREFIX_HELP)
     args = ap.parse_args(argv)
-    values: list[tuple[int, str]] = []
-    unread = 0
-    for rule, f, line, _col, msg in hits_of(args.format, args.output, args.prefix):
-        if rule != args.rule:
-            continue
-        v = value_of(msg)
-        if v is None:
-            unread += 1
-        else:
-            values.append((v, f"{f}:{line}"))
-    if unread:
-        warn(f"{unread} sites of {args.rule} carry no value this script can read")
+    hits = [hit for hit in hits_of(args.format, args.output, args.prefix) if hit[0] == args.rule]
+    values = [(v, f"{hit[1]}:{hit[2]}") for hit in hits if (v := value_of(hit[4])) is not None]
+    if len(values) < len(hits):
+        warn(f"{len(hits) - len(values)} sites of {args.rule} carry no value this script can read")
     if not values:
-        warn(f"no site of {args.rule} with a value: check the rule id and that the limit was set low")
+        warn(
+            f"no site of {args.rule} with a value: check the rule id and that the limit was set low"
+        )
         return 1
     print(f"{'limit':>6}  {'sites over it':>13}")
-    for t in ints(args.at):
-        print(f"{t:>6}  {sum(1 for v, _ in values if v > t):>13}")
+    for limit in ints(args.at):
+        print(f"{limit:>6}  {sum(1 for v, _ in values if v > limit):>13}")
     worst = sorted(values, reverse=True)[:5]
     print("highest:", ", ".join(f"{v} {loc}" for v, loc in worst))
     return 0
 
 
-def tracked(paths: list[str], exts: tuple[str, ...]) -> list[str] | None:
-    listed = subprocess.run(["git", "ls-files", "--", *paths], capture_output=True, text=True,
-                            encoding="utf-8", check=False)
+def tracked(paths: list[str], ext: str) -> list[str]:
+    """The files git tracks under the paths with one of the extensions; none, with a warning."""
+    listed = subprocess.run(
+        ["git", "ls-files", "--", *paths],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
     if listed.returncode != 0:
         warn(f"git ls-files failed: {listed.stderr.strip()}")
-        return None
-    return [f for f in listed.stdout.splitlines() if f.endswith(exts)]
+        return []
+    files = [file for file in listed.stdout.splitlines() if file.endswith(tuple(csv(ext)))]
+    if not files:
+        warn("no tracked file matches the extensions")
+    return files
+
+
+def _matches(files: list[str], regex: str) -> set[Site]:
+    pattern = re.compile(regex)
+    sites: set[Site] = set()
+    for file in files:
+        with Path(file).open(encoding="utf-8", errors="replace") as fh:
+            sites.update(
+                (f"pattern:{regex}", file, n, m.start() + 1)
+                for n, line in enumerate(fh, 1)
+                if (m := pattern.search(line))
+            )
+    return sites
 
 
 def cmd_pattern(argv: list[str]) -> int:
@@ -451,29 +254,13 @@ def cmd_pattern(argv: list[str]) -> int:
     ap.add_argument("--expect", type=int)
     ap.add_argument("--scope-depth", type=int)
     args = ap.parse_intermixed_args(argv)  # the paths may follow the options
-    files = tracked(args.paths, tuple(e.strip() for e in args.ext.split(",") if e.strip()))
-    if files is None:
-        return 1
+    files = tracked(args.paths, args.ext)
     if not files:
-        warn("no tracked file matches the extensions")
         return 1
-    pattern = re.compile(args.regex)
-    sites: set[Site] = set()
-    for f in files:
-        with open(f, encoding="utf-8", errors="replace") as fh:
-            for n, line in enumerate(fh, 1):
-                m = pattern.search(line)
-                if m:
-                    sites.add((f"pattern:{args.regex}", f, n, m.start() + 1))
+    sites = _matches(files, args.regex)
     print(f"{len(files)} files read")
     print_table(sites, args.scope_depth)
-    if args.expect is not None and len(sites) != args.expect:
-        more = len(sites) > args.expect
-        print(f"ratchet: {len(sites)} sites, the ratchet holds {args.expect}: "
-              + ("new debt; fix it, the count does not go up" if more
-                 else f"the count went down; lower the ratchet to {len(sites)} in this change"))
-        return 1
-    return 0
+    return ratchet(len(sites), args.expect)
 
 
 def cmd_sizes(argv: list[str]) -> int:
@@ -483,121 +270,73 @@ def cmd_sizes(argv: list[str]) -> int:
     ap.add_argument("--lines", default="200,300,400,500,700,1000")
     ap.add_argument("--width", default="80,100,120")
     args = ap.parse_args(argv)
-    exts = tuple(e.strip() for e in args.ext.split(",") if e.strip())
-    listed = subprocess.run(["git", "ls-files", "--", *args.paths], capture_output=True, text=True,
-                            encoding="utf-8", check=False)
-    if listed.returncode != 0:
-        warn(f"git ls-files failed: {listed.stderr.strip()}")
-        return 1
-    files = [f for f in listed.stdout.splitlines() if f.endswith(exts)]
+    files = tracked(args.paths, args.ext)
     if not files:
-        warn("no tracked file matches the extensions")
         return 1
     sizes: list[tuple[int, str]] = []
     widths: list[int] = []
-    for f in files:
-        with open(f, encoding="utf-8", errors="replace") as fh:
-            lines = fh.read().splitlines()
-        sizes.append((sum(1 for l in lines if l.strip()), f))
-        widths.extend(len(l) for l in lines)
+    for file in files:
+        lines = Path(file).read_text(encoding="utf-8", errors="replace").splitlines()
+        sizes.append((sum(1 for line in lines if line.strip()), file))
+        widths.extend(len(line) for line in lines)
     print(f"{len(files)} files")
     print(f"{'lines':>6}  {'files over it':>13}")
-    for t in ints(args.lines):
-        print(f"{t:>6}  {sum(1 for n, _ in sizes if n > t):>13}")
-    print("largest:", ", ".join(f"{n} {f}" for n, f in sorted(sizes, reverse=True)[:5]))
+    for limit in ints(args.lines):
+        print(f"{limit:>6}  {sum(1 for n, _ in sizes if n > limit):>13}")
+    print("largest:", ", ".join(f"{n} {file}" for n, file in sorted(sizes, reverse=True)[:5]))
     print(f"{'width':>6}  {'lines over it':>13}")
-    for t in ints(args.width):
-        print(f"{t:>6}  {sum(1 for w in widths if w > t):>13}")
+    for limit in ints(args.width):
+        print(f"{limit:>6}  {sum(1 for w in widths if w > limit):>13}")
     return 0
 
 
-_HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
-
-
-def added_lines(base: str) -> dict[str, set[int]]:
-    """Path -> the line numbers the working tree adds against BASE."""
-    out = subprocess.run(["git", "diff", "-U0", "--no-color", "--no-ext-diff", base, "--"],
-                         capture_output=True, text=True, encoding="utf-8", errors="replace")
-    if out.returncode != 0:
-        sys.exit(f"git diff {base} failed: {out.stderr.strip()}")
-    lines: dict[str, set[int]] = defaultdict(set)
-    path = None
-    for line in out.stdout.splitlines():
-        if line.startswith("+++ "):
-            path = None if line[4:] == "/dev/null" else line[4:].removeprefix("b/")
-        elif path and (m := _HUNK.match(line)):
-            start, count = int(m.group(1)), int(m.group(2) or 1)
-            lines[path].update(range(start, start + count))
-    # Files git does not track yet are new code too.
-    untracked = subprocess.run(["git", "ls-files", "--others", "--exclude-standard"],
-                               capture_output=True, text=True).stdout.split()
-    for f in untracked:
-        try:
-            with open(f, encoding="utf-8", errors="replace") as fh:
-                lines[f].update(range(1, sum(1 for _ in fh) + 1))
-        except OSError:
-            continue
-    return lines
-
-
-def cmd_added(argv: list[str]) -> int:
-    ap = argparse.ArgumentParser(prog="tally.py added")
-    ap.add_argument("format", choices=sorted(PARSERS))
-    ap.add_argument("output")
-    ap.add_argument("--base", required=True, help="the merge base the change is measured against")
-    ap.add_argument("--ignore", default="", help="rules left out, comma-separated")
+def cmd_diff(argv: list[str]) -> int:
+    ap = argparse.ArgumentParser(prog="tally.py diff")
+    ap.add_argument("a")
+    ap.add_argument("b")
+    ap.add_argument("--json")
+    ap.add_argument("--scope-depth", type=int)
     args = ap.parse_args(argv)
-    skip = {r for r in args.ignore.split(",") if r}
-    new = added_lines(args.base)
-    hits = sorted((f, line, col, rule, msg) for rule, f, line, col, msg in hits_of(args.format, args.output)
-                  if rule not in skip and line in new.get(f, ()))
-    for f, line, col, rule, msg in hits:
-        print(f"{f}:{line}:{col}: {rule} {msg}")
-    print(f"{len(hits)} sites on lines this change adds"
-          + ("; new code meets the whole target, debt rules too: fix them" if hits else ""))
-    return 1 if hits else 0
+    sites = load(args.b) - load(args.a)
+    if args.json:
+        dump(sites, args.json)
+    print_table(sites, args.scope_depth)
+    return 0
+
+
+def cmd_plain(argv: list[str]) -> int:
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    ap.add_argument("format", choices=sorted(PARSERS))
+    ap.add_argument("output", help="the tool's output file, or - for stdin")
+    ap.add_argument("--json", help="write the sites to this file, for `diff`")
+    ap.add_argument("--scope-depth", type=int)
+    ap.add_argument("--prefix", default="", help=_PREFIX_HELP)
+    ap.add_argument("--expect", type=int, help="a ratchet: fail unless the total is exactly this")
+    args = ap.parse_args(argv)
+    hits = hits_of(args.format, args.output, args.prefix)
+    sites = {hit[:4] for hit in hits}
+    if args.json:
+        dump(sites, args.json)
+    print_table(sites, args.scope_depth, {hit[:4]: hit[5] for hit in hits if hit[5]})
+    return ratchet(len(sites), args.expect)
+
+
+COMMANDS = {
+    "added": added.main,
+    "curve": cmd_curve,
+    "pattern": cmd_pattern,
+    "sizes": cmd_sizes,
+    "diff": cmd_diff,
+}
 
 
 def main() -> int:
-    if len(sys.argv) > 1 and sys.argv[1] == "added":
-        return cmd_added(sys.argv[2:])
-    if len(sys.argv) > 1 and sys.argv[1] == "curve":
-        return cmd_curve(sys.argv[2:])
-    if len(sys.argv) > 1 and sys.argv[1] == "pattern":
-        return cmd_pattern(sys.argv[2:])
-    if len(sys.argv) > 1 and sys.argv[1] == "sizes":
-        return cmd_sizes(sys.argv[2:])
-    if len(sys.argv) > 1 and sys.argv[1] == "diff":
-        ap = argparse.ArgumentParser(prog="tally.py diff")
-        ap.add_argument("a")
-        ap.add_argument("b")
-        ap.add_argument("--json")
-        ap.add_argument("--scope-depth", type=int)
-        args = ap.parse_args(sys.argv[2:])
-        sites = load(args.b) - load(args.a)
-        fixes: dict[Site, str] = {}
-    else:
-        ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-        ap.add_argument("format", choices=sorted(PARSERS))
-        ap.add_argument("output", help="the tool's output file, or - for stdin")
-        ap.add_argument("--json", help="write the sites to this file, for `diff`")
-        ap.add_argument("--scope-depth", type=int)
-        ap.add_argument("--prefix", default="", help="put before every path (jscpd names files from the scanned folder)")
-        ap.add_argument("--expect", type=int, help="a ratchet: fail unless the total is exactly this")
-        args = ap.parse_args()
-        fixes = {}
-        sites = {h[:4] for h in hits_of(args.format, args.output, args.prefix, fixes)}
-    if args.json:
-        dump(sites, args.json)
-    print_table(sites, args.scope_depth, fixes)
-    expect = getattr(args, "expect", None)
-    if expect is not None and len(sites) != expect:
-        more = len(sites) > expect
-        print(f"ratchet: {len(sites)} sites, the ratchet holds {expect}: "
-              + ("new debt; fix it, the count does not go up" if more
-                 else f"the count went down; lower the ratchet to {len(sites)} in this change"))
-        return 1
-    return 0
+    argv = sys.argv[1:]
+    if argv and argv[0] in COMMANDS:
+        return COMMANDS[argv[0]](argv[1:])
+    return cmd_plain(argv)
 
 
 if __name__ == "__main__":

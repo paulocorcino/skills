@@ -69,7 +69,7 @@ The checks that hold for every stack. Each row is measured like a lint rule: its
 | Check | Form |
 |---|---|
 | Protected main branch | every check required; changes reach main only through a pull request |
-| An agent hook | refuses `--no-verify`, a force push, and an edit nobody asked for to a baseline, a ratchet constant or a linter config |
+| An agent hook | refuses `--no-verify`, a force push, and an edit nobody asked for to a baseline, a ratchet constant, a linter config or the copied scripts |
 | Shift left | a per-edit agent hook runs the fast linters and the formatter check on the changed files and hands the output back to the agent; the editor reads the same config files, so a rule set only by a CLI flag is invisible there |
 | Pre-commit hook (optional) | only the fast checks over changed files; CI is the real gate |
 
@@ -84,7 +84,7 @@ python tally.py curve jscpd <scratch>/jscpd-report.json --rule jscpd:<language> 
 - jscpd reads the repo's `.jscpd.json` even with flags on the command line: its ignore list holds, and each flag replaces only its own setting. `--min-tokens` alone keeps the file's `minLines`: pass both sizes.
 - The `curve` is an estimate from one run at the lowest size; the count at the chosen size comes from a run at that size (measured: the curve gave 186 clones at 50 tokens, a run at 50/5 gave 225).
 - jscpd 4.x names each file from the folder it scanned, and `--prefix` puts that folder back; jscpd 5.x names files from the repo root already, and `--prefix` then breaks them. Check one path of the report before tallying.
-- jscpd reads code blocks in Markdown: the plan's target configs and the copied scripts would count as clones. Ignore both, with the reason.
+- jscpd reads code blocks in Markdown: the plan's target configs would count as clones. Ignore them, with the reason. The copied scripts are counted like any code (0 clones at 50 tokens and 5 lines, as shipped).
 - A site is one clone: a block copied to three places is two clones.
 
 ## Exits
@@ -106,9 +106,13 @@ The ways to turn the gate green without fixing the code. Each one is `closed by 
 | Two rules merged into one helper to remove a clone | open: no tool tells one rule from two that look alike; a human reads the merge |
 | A clone hidden by an ignore marker (`jscpd:ignore-start`) | a ratchet that counts the markers, each with its reason |
 | A row of a reference that the lint gate run skipped | `rows.py check` on the plan's evidence |
+| A row waved off with `n/a` or `out` that applies to the repo | open: `rows.py check` reads a verdict's form, not its truth; it prints each such row with its reason, and a human reads the list in the report |
+| A count typed into the evidence that no run produced | `rows.py check <evidence> --record <record>` in the gate: the debt table against the record, whose counts `progress.py` wrote from the tally files |
 | An `ast-grep-ignore` with no rule id, or on the first line of a file | the ratchet at 0 on ignores without a rule id and a reason (§ ast-grep) |
 | A force push to the default branch that drops the base commit: `shrink` against an empty base passes | branch protection on the default branch (no force push); a pull request compares with its merge base |
-| The skill's own artifacts in the repo (the copied scripts, the plan's code blocks) counted or linted as the repo's code | excluded from the linters and jscpd by path, with the reason, and named in the plan |
+| The plan's code blocks and the drafts counted or linted as the repo's code | excluded from jscpd and the linters by path, with the reason, and named in the plan |
+| An edit to the copied scripts that makes one of their checks pass | the copy's own tests in the gate and in CI (`gate.py --tests`), and the agent hook, which refuses an unasked edit to the copy |
+| A new site passed off as a move: its line's text is one the change removes elsewhere | `tally.py added` lets each removed line pay for one added line of its text, so the rule's count cannot rise through a move |
 | A new `noise:` entry in a debt list: a debt rule off "for good" | `debt.py shrink` fails unless the reason cites a decision id the plan records |
 | A fake reason on an exception | open: a ratchet counts the exceptions, and a human reads each new one |
 | A new site of a rule on the debt list: the rule is off, so its debt grows unseen | `tally.py added` over a draft run, against the merge base: a site on a line the change adds fails (SKILL.md step 5) |

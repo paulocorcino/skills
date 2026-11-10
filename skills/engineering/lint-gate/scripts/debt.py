@@ -6,7 +6,8 @@ The block is the step-5 flip for a group. It is printed, not written: paste it i
 the config where the comment says, keeping the file's line endings.
 
   debt.py oxlint --rules LIST --config CONFIG --sites SITES... [--plugins p,..]
-                 [--categories c,..] [--target r,..] [--noise NOISE.json] [--plan PATH]
+                 [--categories c,..] [--target r,..] [--draft DRAFT]
+                 [--noise NOISE.json] [--plan PATH]
   debt.py clippy --help-list HELP --sites SITES... --groups g,.. [--target l,..]
                  [--noise NOISE.json] [--plan PATH]
   debt.py golangci --sites SITES... [--noise NOISE.json] [--plan PATH] [--by-id gosec,gocritic]
@@ -36,9 +37,14 @@ decision, not a way out of the debt list.
 oxlint: the rules that come on are those of every category and plugin on after
 the change, minus those on before, plus --target. A new plugin brings its rules
 of the categories already on, so they are counted too. A rule the config already
-sets keeps its setting. A rule with sites is `off` under `// debt: N sites`, a
-noise rule under `// noise: <reason>`, a rule with no site is on by its category
-or, for --target, by an `"error"` line.
+sets at `error` or `off` keeps its setting; one it sets at `warn`, and each rule
+of a category at `warn`, comes on like the rest (the gate has no warn level), and
+stderr names the `warn` lines the block's lines replace. A rule with sites is
+`off` under `// debt: N sites`, a noise rule under `// noise: <reason>`, a rule
+with no site is on by its category or, for --target, by an `"error"` line.
+DRAFT is the target config the sites were measured with: a rule it sets with
+options comes on with them (`["error", {"max": 4}]`), and one that waits as debt
+says where they are (`// debt: 3 sites; its options are in DRAFT`).
 
 clippy: each group of --groups goes to `deny` with priority -1; each lint of the
 group with sites is `allow` under `# debt: N sites`. A --target lint with no site
@@ -63,384 +69,438 @@ import json
 import re
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING, NamedTuple
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from drift import jsonc  # noqa: E402  (a sibling script, not a package)
+sys.dont_write_bytecode = True  # a run writes nothing into this folder
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # the sibling files, under `python -I` too
+
+import debtlist
+from narrow import csv, items, jsonc, load, obj, read, text, texts
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+Sites = dict[str, set[str]]  # rule -> its sites
+Ranked = list[tuple[int, str]]  # (sites, rule), the most sites first
+Notes = dict[str, str]  # rule -> what its `debt:` comment says after the count
 
 
-def site_counts(paths: list[str]) -> dict[str, int]:
-    """Rule -> sites, the union of the tally files, with oxlint codes as `scope/rule`."""
-    union: dict[str, set[str]] = {}
-    for p in paths:
-        for rule, locs in json.loads(Path(p).read_text(encoding="utf-8")).items():
-            m = re.fullmatch(r"([\w-]+)\((.+)\)", rule)
-            name = f"{m.group(1)}/{m.group(2)}" if m else rule
-            union.setdefault(name, set()).update(locs)
-    return {k: len(v) for k, v in union.items()}
+def union(paths: list[str], name: Callable[[str], str]) -> Sites:
+    """The sites of the tally files per rule, `name` giving each rule its key;
+    a site in several files counts once. A tally's own marks (`(syntax error)`,
+    `(no rule)`) are no rule of the tool, so they stay out of a debt list."""
+    out: Sites = {}
+    for path in paths:
+        rules = {rule: locs for rule, locs in obj(load(path)).items() if not rule.startswith("(")}
+        for rule, locs in rules.items():
+            out.setdefault(name(rule), set()).update(str(loc) for loc in items(locs))
+    return out
+
+
+def ranked(sites: Sites, skip: set[str] | dict[str, str]) -> Ranked:
+    found = ((len(locs), rule) for rule, locs in sites.items() if locs and rule not in skip)
+    return sorted(found, key=lambda pair: (-pair[0], pair[1]))
 
 
 def plural(n: int) -> str:
     return f"{n} site" if n == 1 else f"{n} sites"
 
 
-def oxlint(args: argparse.Namespace) -> int:
-    listing = json.loads(Path(args.rules).read_text(encoding="utf-8"))
-    cfg = jsonc(Path(args.config).read_text(encoding="utf-8-sig"))
-    sites = site_counts(args.sites)
-    noise = json.loads(Path(args.noise).read_text(encoding="utf-8")) if args.noise else {}
-    plugins_before = set(cfg.get("plugins") or [])
-    cats_before = {c for c, lvl in (cfg.get("categories") or {}).items() if lvl in ("error", "warn")}
-    plugins_after = plugins_before | set(filter(None, args.plugins.split(",")))
-    cats_after = cats_before | set(filter(None, args.categories.split(",")))
-    target = set(filter(None, args.target.split(",")))
+def noise_of(path: str | None) -> dict[str, str]:
+    return {rule: text(reason) for rule, reason in obj(load(path)).items()} if path else {}
 
-    def full(name: str) -> str:
-        return name if "/" in name else f"eslint/{name}"
 
-    def key(name: str) -> str:
-        return name.split("/", 1)[1] if name.startswith("eslint/") else name
+def commented(mark: str, kind: str, said: str, entry: str) -> list[str]:
+    """An entry under its comment, each on its own line."""
+    indent = entry[: len(entry) - len(entry.lstrip())]
+    return [f"{indent}{mark} {kind}: {said}", entry]
 
-    configured = {full(k) for k in (cfg.get("rules") or {})}
-    active_before, active_after = set(), set()
-    for r in listing:
-        name = f"{r['scope']}/{r['value']}"
-        plugin_on = r["scope"] in plugins_before or r["scope"] == "eslint"
-        if plugin_on and r["category"] in cats_before:
-            active_before.add(name)
-        if (r["scope"] in plugins_after or r["scope"] == "eslint") and r["category"] in cats_after:
-            active_after.add(name)
-    known = {f"{r['scope']}/{r['value']}" for r in listing}
-    unknown = sorted(t for t in map(full, target) if t not in known)
+
+def summary(what: str, debts: Ranked, noise: dict[str, str]) -> str:
+    return f"{len(debts)} {what} in debt ({sum(n for n, _ in debts)} sites), {len(noise)} noise"
+
+
+# ---- oxlint ----------------------------------------------------------------
+
+
+def _oxlint_name(rule: str) -> str:
+    """A tally's `scope(rule)` as the config's `scope/rule`."""
+    m = re.fullmatch(r"([\w-]+)\((.+)\)", rule)
+    return f"{m.group(1)}/{m.group(2)}" if m else rule
+
+
+def _full(name: str) -> str:
+    return name if "/" in name else f"eslint/{name}"
+
+
+def _key(name: str) -> str:
+    return name.split("/", 1)[1] if name.startswith("eslint/") else name
+
+
+def _active(listing: list[tuple[str, str, str]], plugins: set[str], cats: set[str]) -> set[str]:
+    return {
+        name
+        for name, scope, category in listing
+        if (scope in plugins or scope == "eslint") and category in cats
+    }
+
+
+class _Coming(NamedTuple):
+    """What an oxlint change turns on."""
+
+    plugins: list[str]  # on after the change
+    categories: list[str]
+    fresh: list[str]  # the rules that come on: new to the config, or set at `warn` in it
+    by_line: set[str]  # the rules no category turns on, or a `warn` line holds: each needs a line
+    raised: list[str]  # the rules the config sets at `warn`: the block's line replaces theirs
+    options: dict[str, str]  # rule -> the options of its end state, as JSON after the level
+    notes: dict[str, str]  # rule -> where its options are, said in its `debt:` comment
+
+
+_LEVELS = {"0": "off", "allow": "off", "1": "warn", "2": "error", "deny": "error"}
+
+
+def _setting(value: object) -> tuple[str, list[object]]:
+    """A rule's setting as its level and its options: `"warn"`, `1`, `["error", {...}]`."""
+    parts = items(value) or [value]
+    level = str(parts[0])
+    return _LEVELS.get(level, level), parts[1:]
+
+
+def _settings(path: str | None, key: str) -> dict[str, tuple[str, list[object]]]:
+    """The level and options of each entry under `key` (rules, categories) of a config."""
+    cfg = obj(jsonc(read(path))) if path else {}
+    return {name: _setting(value) for name, value in obj(cfg.get(key)).items()}
+
+
+def _oxlint_options(args: argparse.Namespace, raised: list[str]) -> tuple[dict[str, str], Notes]:
+    """The options each rule comes on with: the draft's, or those of the `warn` line it had.
+    The note is for a rule that waits as debt: the draft holds its options; a `warn` line
+    the block replaces is the only place that held them, so the note keeps the line."""
+    options: dict[str, str] = {}
+    notes: Notes = {}
+    was = {_full(key): opts for key, (_, opts) in _settings(args.config, "rules").items() if opts}
+    for name in [name for name in raised if name in was]:
+        options[name] = json.dumps(was[name])[1:-1]
+        notes[name] = f'was ["warn", {options[name]}]'
+    draft = _settings(args.draft, "rules")
+    for name, opts in [(_full(key), opts) for key, (_, opts) in draft.items() if opts]:
+        options[name] = json.dumps(opts)[1:-1]
+        notes[name] = f"its options are in {args.draft}"
+    return options, notes
+
+
+def _at(path: str, key: str, level: str) -> set[str]:
+    """The entries under `key` of a config that sit at the level."""
+    return {name for name, (found, _) in _settings(path, key).items() if found == level}
+
+
+def _oxlint_listing(path: str) -> list[tuple[str, str, str]]:
+    """Each rule of the tool: its full name, its scope and its category."""
+    rules = [obj(rule) for rule in items(load(path))]
+    return [
+        (
+            f"{text(r.get('scope'))}/{text(r.get('value'))}",
+            text(r.get("scope")),
+            text(r.get("category")),
+        )
+        for r in rules
+    ]
+
+
+def _oxlint_coming(args: argparse.Namespace) -> _Coming | None:
+    listing = _oxlint_listing(args.rules)
+    target = {_full(name) for name in csv(args.target)}
+    unknown = sorted(target - {name for name, _, _ in listing})
     if unknown:
         print("unknown --target rules:", ", ".join(unknown), file=sys.stderr)
+        return None
+    plugins_before = set(texts(obj(jsonc(read(args.config))).get("plugins")))
+    plugins_after = plugins_before | set(csv(args.plugins))
+    # A category at `warn` is not on yet: its rules with sites are debt like any other.
+    cats_before = _at(args.config, "categories", "error")
+    cats_after = cats_before | _at(args.config, "categories", "warn") | set(csv(args.categories))
+    raised = {_full(key) for key in _at(args.config, "rules", "warn")}
+    kept = {_full(key) for key in _settings(args.config, "rules")} - raised
+    active_after = _active(listing, plugins_after, cats_after)
+    coming = (active_after - _active(listing, plugins_before, cats_before)) | target | raised
+    options, notes = _oxlint_options(args, sorted(raised))
+    return _Coming(
+        plugins=sorted(plugins_after),
+        categories=sorted(cats_after),
+        fresh=sorted(coming - kept),
+        by_line=(target - active_after) | raised | set(options),
+        raised=sorted(raised),
+        options=options,
+        notes=notes,
+    )
+
+
+def _oxlint_kinds(
+    fresh: list[str], sites: dict[str, int], noise: dict[str, str]
+) -> tuple[list[str], list[str], list[str]]:
+    """The rules that come on, split: off for good, off as debt, and on."""
+    off = [name for name in fresh if {name, _key(name)} & set(noise)]
+    debt = [name for name in fresh if name not in off and sites.get(name, 0)]
+    return off, debt, [name for name in fresh if name not in off and name not in debt]
+
+
+def _oxlint_on(name: str, options: dict[str, str]) -> str:
+    setting = f'["error", {options[name]}]' if name in options else '"error"'
+    return f'"{_key(name)}": {setting},'
+
+
+def oxlint(args: argparse.Namespace) -> int:
+    coming = _oxlint_coming(args)
+    if coming is None:
         return 1
-    coming = (active_after - active_before) | {full(t) for t in target}
-    on, debt, off = [], [], []
-    for name in sorted(coming - configured):
-        if name in noise or key(name) in noise:
-            off.append(name)
-        elif sites.get(name, 0):
-            debt.append(name)
-        elif name in {full(t) for t in target} and name not in active_after:
-            on.append(name)
-    plan = args.plan or "the transition plan"
+    sites = {rule: len(locs) for rule, locs in union(args.sites, _oxlint_name).items()}
+    noise = noise_of(args.noise)
+    off, debt, rest = _oxlint_kinds(coming.fresh, sites, noise)
     out = [
-        f'"plugins": {json.dumps(sorted(plugins_after))},',
-        f'"categories": {json.dumps({c: "error" for c in sorted(cats_after)})},',
+        f'"plugins": {json.dumps(coming.plugins)},',
+        f'"categories": {json.dumps(dict.fromkeys(coming.categories, "error"))},',
         "",
         "// The lint gate. A rule `off` below is one of two kinds. `debt`: it has",
-        f"// sites today and {plan} turns it on; this list only shrinks.",
+        f"// sites today and {args.plan} turns it on; this list only shrinks.",
         "// `noise`: off for good, with the reason.",
     ]
-    out += [f'"{key(n)}": "error",' for n in on]
-    for n in sorted(debt, key=lambda n: (-sites[n], n)):
-        out += [f"// debt: {plural(sites[n])}", f'"{key(n)}": "off",']
-    for n in off:
-        out += [f"// noise: {noise.get(n) or noise.get(key(n))}", f'"{key(n)}": "off",']
+    out += [_oxlint_on(name, coming.options) for name in sorted(set(rest) & coming.by_line)]
+    for name in sorted(debt, key=lambda name: (-sites[name], name)):
+        said = "; ".join([plural(sites[name]), *filter(None, [coming.notes.get(name)])])
+        out += commented("//", "debt", said, f'"{_key(name)}": "off",')
+    for name in off:
+        reason = noise.get(name) or noise.get(_key(name)) or ""
+        out += commented("//", "noise", reason, f'"{_key(name)}": "off",')
     print("\n".join(out))
-    newly = len(coming - configured)
-    print(f"\n{newly} rules come on: {newly - len(debt) - len(off)} with no site, "
-          f"{len(debt)} debt ({sum(sites[n] for n in debt)} sites), {len(off)} noise", file=sys.stderr)
+    was_warn = ", ".join(_key(name) for name in coming.raised)
+    print(
+        f"\n{len(coming.fresh)} rules come on: {len(rest)} with no site, "
+        f"{len(debt)} debt ({sum(sites[name] for name in debt)} sites), {len(off)} noise"
+        + f"\nset at `warn` today, each line replaced by the block's: {was_warn}"
+        * bool(was_warn),
+        file=sys.stderr,
+    )
     return 0
+
+
+# ---- clippy ----------------------------------------------------------------
+
+
+def _clippy_group(help_list: str, group: str) -> tuple[bool, list[str]] | None:
+    """Whether the group is clippy's, and its lints, from `cargo clippy -- -W help`."""
+    name = re.escape(group.replace("clippy::", "").replace("_", "-"))
+    m = re.search(rf"^\s*(?:clippy::)?{name}\s+(.+)$", help_list, re.MULTILINE)
+    if not m:
+        return None
+    members = [x.strip().replace("clippy::", "").replace("-", "_") for x in m.group(1).split(",")]
+    return group.startswith("clippy::") or "clippy::" in m.group(1), members
+
+
+def _clippy_block(
+    group: str, members: list[str], prefix: str, args: argparse.Namespace
+) -> tuple[list[str], int]:
+    """The lines that turn a group on, and the sites of its debt."""
+    noise = noise_of(args.noise)
+    sites = union(args.sites, str)
+    lines = [
+        "",
+        f"# The lint gate: `{group}` is on. A lint `allow` below is debt that {args.plan}",
+        "# turns on (this list only shrinks), or noise, off for good with its reason.",
+        f'{group} = {{ level = "deny", priority = -1 }}',
+    ]
+    for lint in sorted(set(members) & {name.removeprefix(prefix) for name in noise}):
+        reason = noise.get(lint) or noise.get(prefix + lint) or ""
+        lines += commented("#", "noise", reason, f'{lint} = "allow"')
+    off = {name.removeprefix("clippy::") for name in noise}
+    debts = ranked({lint: sites.get(prefix + lint, set()) for lint in members}, off)
+    for n, lint in debts:
+        lines += commented("#", "debt", plural(n), f'{lint} = "allow"')
+    return lines, sum(n for n, _ in debts)
 
 
 def clippy(args: argparse.Namespace) -> int:
-    text = Path(args.help_list).read_text(encoding="utf-8", errors="replace")
-    sites = site_counts(args.sites)
-    noise = json.loads(Path(args.noise).read_text(encoding="utf-8")) if args.noise else {}
-    plan = args.plan or "the transition plan"
-    rust, clip = [], []
-    total_debt = 0
-    for group in filter(None, args.groups.split(",")):
-        g = group.replace("clippy::", "")
-        m = re.search(rf"^\s*(?:clippy::)?{re.escape(g.replace('_', '-'))}\s+(.+)$", text, re.M)
-        if not m:
+    help_list = read(args.help_list)
+    tables: dict[bool, list[str]] = {False: [], True: []}  # rustc's lints, clippy's lints
+    total = 0
+    for group in csv(args.groups):
+        found = _clippy_group(help_list, group)
+        if found is None:
             print(f"no group {group} in the help list", file=sys.stderr)
             return 1
-        is_clippy = group.startswith("clippy::") or "clippy::" in m.group(1)
-        members = [x.strip().replace("clippy::", "").replace("-", "_") for x in m.group(1).split(",")]
-        lines = rust if not is_clippy else clip
-        lines += ["", f"# The lint gate: `{g}` is on. A lint `allow` below is debt that {plan}",
-                  "# turns on (this list only shrinks), or noise, off for good with its reason.",
-                  f'{g} = {{ level = "deny", priority = -1 }}']
-        for lint in sorted(members):
-            full = f"clippy::{lint}" if is_clippy else lint
-            if lint in noise or full in noise:
-                lines += [f"# noise: {noise.get(lint) or noise.get(full)}", f'{lint} = "allow"']
-        debts = [(sites[f"clippy::{l}" if is_clippy else l], l) for l in members
-                 if sites.get(f"clippy::{l}" if is_clippy else l, 0) and l not in noise
-                 and f"clippy::{l}" not in noise]
-        for n, lint in sorted(debts, key=lambda x: (-x[0], x[1])):
-            lines += [f"# debt: {plural(n)}", f'{lint} = "allow"']
-        total_debt += sum(n for n, _ in debts)
-    for t in filter(None, args.target.split(",")):
-        lint = t.replace("clippy::", "")
-        is_clippy = t.startswith("clippy::")
-        if not sites.get(t, 0):
-            (clip if is_clippy else rust).append(f'{lint} = "deny"')
-    print("[workspace.lints.rust]" + "\n".join([""] + rust))
-    print("\n[workspace.lints.clippy]" + "\n".join([""] + clip))
-    print(f"\ndebt in the groups: {total_debt} sites", file=sys.stderr)
+        is_clippy, members = found
+        prefix = "clippy::" if is_clippy else ""
+        lines, debt = _clippy_block(group.replace("clippy::", ""), members, prefix, args)
+        tables[is_clippy] += lines
+        total += debt
+    sites = union(args.sites, str)
+    for lint in csv(args.target):
+        if not sites.get(lint):
+            tables[lint.startswith("clippy::")].append(f'{lint.replace("clippy::", "")} = "deny"')
+    print("[workspace.lints.rust]" + "\n".join(["", *tables[False]]))
+    print("\n[workspace.lints.clippy]" + "\n".join(["", *tables[True]]))
+    print(f"\ndebt in the groups: {total} sites", file=sys.stderr)
     return 0
 
 
-def _ranked(paths: list[str], skip: set[str]) -> list[tuple[int, str]]:
-    sites: dict[str, set[str]] = {}
-    for p in paths:
-        for rule, locs in json.loads(Path(p).read_text(encoding="utf-8")).items():
-            sites.setdefault(rule.split(":")[-1], set()).update(locs)
-    return sorted(((len(v), k) for k, v in sites.items() if v and k not in skip), key=lambda x: (-x[0], x[1]))
+# ---- ruff, mypy ------------------------------------------------------------
+
+
+def _last_part(rule: str) -> str:
+    return rule.rsplit(":", maxsplit=1)[-1]
 
 
 def ruff(args: argparse.Namespace) -> int:
-    noise = json.loads(Path(args.noise).read_text(encoding="utf-8")) if args.noise else {}
-    plan = args.plan or "the transition plan"
-    debts = _ranked(args.sites, set(noise))
-    out = ['select = ["ALL"]',
-           f"# The lint gate: every rule is on. A code in `ignore` is debt that {plan}",
-           "# turns on (this list only shrinks), or noise, off for good with its reason.",
-           "ignore = ["]
+    noise = noise_of(args.noise)
+    debts = ranked(union(args.sites, _last_part), noise)
+    out = [
+        'select = ["ALL"]',
+        f"# The lint gate: every rule is on. A code in `ignore` is debt that {args.plan}",
+        "# turns on (this list only shrinks), or noise, off for good with its reason.",
+        "ignore = [",
+    ]
     for code in sorted(noise):
-        out += [f"  # noise: {noise[code]}", f'  "{code}",']
+        out += commented("#", "noise", noise[code], f'  "{code}",')
     for n, code in debts:
-        out += [f"  # debt: {plural(n)}", f'  "{code}",']
-    out.append("]")
-    print("\n".join(out))
-    print(f"\n{len(debts)} codes in debt ({sum(n for n, _ in debts)} sites), {len(noise)} noise", file=sys.stderr)
+        out += commented("#", "debt", plural(n), f'  "{code}",')
+    print("\n".join([*out, "]"]))
+    print(f"\n{summary('codes', debts, noise)}", file=sys.stderr)
     return 0
 
 
 def mypy(args: argparse.Namespace) -> int:
-    noise = json.loads(Path(args.noise).read_text(encoding="utf-8")) if args.noise else {}
-    plan = args.plan or "the transition plan"
-    enabled = {x.strip() for x in (args.enabled or "").split(",") if x.strip()}
-    debts = _ranked(args.sites, set(noise))
-    out = [f"# The type gate: `strict`. A code in `disable_error_code` is debt that {plan}",
-           "# turns on (this list only shrinks), or noise, off for good with its reason.",
-           "disable_error_code ="]
+    noise = noise_of(args.noise)
+    debts = ranked(union(args.sites, _last_part), noise)
+    out = [
+        f"# The type gate: `strict`. A code in `disable_error_code` is debt that {args.plan}",
+        "# turns on (this list only shrinks), or noise, off for good with its reason.",
+        "disable_error_code =",
+    ]
     for code in sorted(noise):
-        out += [f"    # noise: {noise[code]}", f"    {code},"]
+        out += commented("#", "noise", noise[code], f"    {code},")
     for n, code in debts:
-        out += [f"    # debt: {plural(n)}", f"    {code},"]
+        out += commented("#", "debt", plural(n), f"    {code},")
     print("\n".join(out))
-    clash = sorted(enabled & {c for _, c in debts})
+    clash = sorted(set(csv(args.enabled)) & {code for _, code in debts})
     if clash:
-        print("\nremove from enable_error_code while they have debt (mypy does not disable a code "
-              f"that enable_error_code names): {', '.join(clash)}", file=sys.stderr)
-    print(f"{len(debts)} codes in debt ({sum(n for n, _ in debts)} sites), {len(noise)} noise", file=sys.stderr)
+        print(
+            "\nremove from enable_error_code while they have debt (mypy does not disable a code "
+            f"that enable_error_code names): {', '.join(clash)}",
+            file=sys.stderr,
+        )
+    print(summary("codes", debts, noise), file=sys.stderr)
     return 0
 
+
+# ---- golangci --------------------------------------------------------------
 
 _BY_ID = {"gosec": "excludes", "gocritic": "disabled-checks"}
 
 
+def _by_id_lines(linter: str, checks: Sites) -> list[str]:
+    lines = [f"    {linter}:", f"      {_BY_ID[linter]}:"]
+    for n, check in ranked(checks, set()):
+        lines += commented("#", "debt", plural(n), f"        - {check}")
+    return lines
+
+
+def _go_sites(paths: list[str], by_id: set[str]) -> tuple[Sites, dict[str, Sites]]:
+    """The sites per linter, and per check id for the linters of --by-id
+    (`gosec:G104`): any other linter counts as a whole."""
+
+    def name(rule: str) -> str:
+        linter = rule.split(":", maxsplit=1)[0]
+        return rule if linter in by_id else linter
+
+    sites = union(paths, name)
+    per_id: dict[str, Sites] = {}
+    for rule in [rule for rule in sites if ":" in rule]:
+        linter, check = rule.split(":", 1)
+        per_id.setdefault(linter, {})[check] = sites.pop(rule)
+    return sites, per_id
+
+
 def golangci(args: argparse.Namespace) -> int:
-    by_id = {x for x in (args.by_id or "").split(",") if x}
+    by_id = set(csv(args.by_id))
     unknown = by_id - set(_BY_ID)
     if unknown:
-        print(f"--by-id supports {', '.join(_BY_ID)}, not {', '.join(sorted(unknown))}", file=sys.stderr)
+        supported, given = ", ".join(_BY_ID), ", ".join(sorted(unknown))
+        print(f"--by-id supports {supported}, not {given}", file=sys.stderr)
         return 2
-    per_linter: dict[str, set[str]] = {}
-    per_id: dict[str, dict[str, set[str]]] = {}
-    for p in args.sites:
-        for rule, locs in json.loads(Path(p).read_text(encoding="utf-8")).items():
-            linter, _, check = rule.partition(":")
-            if linter in by_id and check:
-                per_id.setdefault(linter, {}).setdefault(check, set()).update(locs)
-            else:
-                per_linter.setdefault(linter, set()).update(locs)
-    noise = json.loads(Path(args.noise).read_text(encoding="utf-8")) if args.noise else {}
-    plan = args.plan or "the transition plan"
-    out = ["linters:", "  default: all",
-           f"  # The lint gate: every linter is on. A linter in `disable` is debt that {plan}",
-           "  # turns on (this list only shrinks), or noise, off for good with its reason.",
-           "  disable:"]
+    sites, per_id = _go_sites(args.sites, by_id)
+    noise = noise_of(args.noise)
+    debts = ranked(sites, noise)
+    out = [
+        "linters:",
+        "  default: all",
+        f"  # The lint gate: every linter is on. A linter in `disable` is debt that {args.plan}",
+        "  # turns on (this list only shrinks), or noise, off for good with its reason.",
+        "  disable:",
+    ]
     for name in sorted(noise):
-        out += [f"    # noise: {noise[name]}", f"    - {name}"]
-    debts = sorted(((len(v), k) for k, v in per_linter.items() if v and k not in noise), key=lambda x: (-x[0], x[1]))
+        out += commented("#", "noise", noise[name], f"    - {name}")
     for n, name in debts:
-        out += [f"    # debt: {plural(n)}", f"    - {name}"]
-    if per_id:
-        out += ["  settings:"]
-        for linter in sorted(per_id):
-            out += [f"    {linter}:", f"      {_BY_ID[linter]}:"]
-            ids = sorted(((len(v), k) for k, v in per_id[linter].items()), key=lambda x: (-x[0], x[1]))
-            out += [line for n, k in ids for line in (f"        # debt: {plural(n)}", f"        - {k}")]
-    print("\n".join(out))
+        out += commented("#", "debt", plural(n), f"    - {name}")
+    out += ["  settings:"] * bool(per_id)
+    kept = []
     for linter in sorted(per_id):
-        print(f"{linter}: on, {len(per_id[linter])} check ids in debt "
-              f"({sum(len(v) for v in per_id[linter].values())} sites)", file=sys.stderr)
-    print(f"{len(debts)} linters in debt ({sum(n for n, _ in debts)} sites), {len(noise)} noise", file=sys.stderr)
+        out += _by_id_lines(linter, per_id[linter])
+        total = sum(len(locs) for locs in per_id[linter].values())
+        kept.append(f"{linter}: on, {len(per_id[linter])} check ids in debt ({total} sites)")
+    print("\n".join(out))
+    print(*kept, sep="\n", end="\n" if kept else "", file=sys.stderr)
+    print(summary("linters", debts, noise), file=sys.stderr)
     return 0
 
 
-# One entry per line, in any of the config forms a debt list takes:
-#   "rule": ...  /  lint = ...        a key (JSON, TOML table)
-#   - linter                          a YAML list item
-#   "CODE",                           a TOML array item (ruff `ignore`)
-#   error-code,                       an INI list item (mypy `disable_error_code`)
-_KEY = (r'^\s*(?:-\s+"?(?P<yaml>[\w/@.-]+)"?(?=\s*(?:#|$))'
-        r'|"(?P<item>[\w/@.-]+)",?(?=\s*(?:#|//|$))'
-        r'|"?(?P<key>[\w/@.-]+)"?\s*[:=]'
-        r'|(?P<bare>[A-Za-z][\w-]*),?(?=\s*(?:#|$)))')
-_ITEMS = re.compile(r'^\s*(?:"[\w/@.-]+",?\s*)+(?:#.*)?$')
-_COUNT = r'(?:#|//)\s*debt:\s*(\d+) sites?'
-_NOISE = r'(?:#|//)\s*noise:\s*(.+?)\s*$'
-_DECISION = re.compile(r'\b(D\d+|ADR-\d+)\b')
-
-
-def _name(m: re.Match) -> str:
-    return m.group("yaml") or m.group("item") or m.group("key") or m.group("bare")
-
-
-_OFF = re.compile(r'[:=]\s*"?(off|allow)"?\s*,?\s*(?:#.*|//.*)?$')
-
-
-def entries(text: str) -> tuple[dict[str, int], dict[str, str], int, set[str]]:
-    """The debt and noise entries of a config, the count of `debt:` comments
-    tied to no entry, and the plain entries: a list item (`"X",`, `- x`, `x,`)
-    or a key set `off`/`allow` with no `debt:` or `noise:` comment, in a block
-    (a run of entry, comment and blank lines) that holds a debt or noise
-    entry, so a list of paths or members stays out. A comment
-    sits on its own line above its entry, or at the end of the entry's line;
-    a noise comment may cover a line of several items."""
-    debt: dict[str, int] = {}
-    noise: dict[str, str] = {}
-    plain: set[str] = set()
-    block: set[str] = set()
-    listed = False
-    comments = 0
-    pending_debt: int | None = None
-    pending_noise: str | None = None
-    for line in text.replace("\r\n", "\n").split("\n"):
-        before = len(debt) + len(noise)
-        inline_debt = re.match(_KEY + r'.*?' + _COUNT, line)
-        inline_noise = re.match(_KEY + r'.*?' + _NOISE, line)
-        alone_debt = re.match(r'^\s*' + _COUNT + r'\b.*$', line)  # a note may follow: `; Phase 1`
-        alone_noise = re.match(r'^\s*' + _NOISE, line)
-        key = re.match(_KEY, line)
-        if re.search(r'(?:#|//)\s*debt:', line) and not (inline_debt or alone_debt):
-            comments += 1  # a `debt:` comment in a form this reads not: counted, so it shows as tied to no entry
-        if inline_debt:
-            comments += 1
-            debt[_name(inline_debt)] = int(inline_debt.group(len(inline_debt.groups())))
-            pending_debt = pending_noise = None
-        elif inline_noise:
-            noise[_name(inline_noise)] = inline_noise.group(len(inline_noise.groups()))
-            pending_debt = pending_noise = None
-        elif alone_debt:
-            comments += 1
-            pending_debt, pending_noise = int(alone_debt.group(1)), None
-        elif alone_noise:
-            pending_noise, pending_debt = alone_noise.group(1), None
-        elif pending_noise is not None and _ITEMS.match(line):
-            for name in re.findall(r'"([\w/@.-]+)"', line):
-                noise[name] = pending_noise
-            pending_noise = None
-        elif key and pending_debt is not None:
-            debt[_name(key)] = pending_debt
-            pending_debt = None
-        elif key and pending_noise is not None:
-            noise[_name(key)] = pending_noise
-            pending_noise = None
-        elif key and (key.group("item") or key.group("yaml") or key.group("bare") or _OFF.search(line)):
-            block.add(_name(key))
-            pending_debt = pending_noise = None
-        elif line.strip() and not line.strip().startswith(("#", "//")) and not key:
-            # A line that is no entry and no comment ends the block.
-            plain |= block if listed else set()
-            block, listed = set(), False
-            pending_debt = pending_noise = None
-        elif line.strip() and not line.strip().startswith(("#", "//")):
-            pending_debt = pending_noise = None
-        listed = listed or len(debt) + len(noise) > before
-    plain |= block if listed else set()
-    return debt, noise, comments - len(debt), plain
-
-
-def debt_entries(text: str) -> dict[str, int]:
-    return entries(text)[0]
-
-
 def shrink(args: argparse.Namespace) -> int:
-    base_path = Path(args.base)
-    base, base_noise, _, base_plain = (entries(base_path.read_text(encoding="utf-8-sig"))
-                                       if base_path.exists() else ({}, {}, 0, set()))
-    head, head_noise, unread, head_plain = entries(Path(args.config).read_text(encoding="utf-8-sig"))
-    if unread:
-        # A debt comment no entry follows: a form this script does not read, which would pass any growth.
-        print(f"{unread} `debt:` comments are tied to no entry: shrink cannot read this config's form")
-        return 1
-    plan = Path(args.plan).read_text(encoding="utf-8-sig") if args.plan else ""
-    bad = []
-    for name, reason in head_noise.items():
-        if name in base_noise or not base:
-            continue
-        cited = _DECISION.findall(reason)
-        if not cited or not all(re.search(rf"\b{re.escape(c)}\b", plan) for c in cited):
-            bad.append(f"new noise entry: {name} ({reason}): a rule off for good is a decision; "
-                       "cite its id (Dn, ADR-n) in the reason, recorded in the plan (--plan)")
-    if not base:
-        # The change that brings the first debt list has nothing to shrink against.
-        print(f"the base has no debt list: this change brings the first one, "
-              f"{len(head)} entries ({sum(head.values())} sites), {len(head_noise)} noise")
-        return 0
-    bad += [f"new debt entry: {r} ({n})" for r, n in head.items() if r not in base]
-    # A rule turned off with no comment is an exit the counts above never see.
-    bad += [f"new entry with no `debt:` or `noise:` comment: {r}: a rule off says why"
-            for r in sorted(head_plain - base_plain)]
-    bad += [f"debt grew: {r} {base[r]} -> {n}" for r, n in head.items() if r in base and n > base[r]]
-    for line in bad:
-        print(line)
-    gone = sorted(set(base) - set(head))
-    print(f"{len(head)} debt entries ({sum(head.values())} sites), {len(gone)} gone since the base"
-          + ("" if bad else "; the list did not grow"))
-    return 1 if bad else 0
+    return debtlist.shrink(args.base, args.config, args.plan)
+
+
+WRITERS = {
+    "oxlint": oxlint,
+    "clippy": clippy,
+    "golangci": golangci,
+    "ruff": ruff,
+    "mypy": mypy,
+    "shrink": shrink,
+}
+
+
+def parser() -> argparse.ArgumentParser:
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    sub = ap.add_subparsers(dest="tool", required=True)
+    for name in ("oxlint", "clippy", "golangci", "ruff", "mypy"):
+        writer = sub.add_parser(name)
+        writer.add_argument("--sites", nargs="+", required=True)
+        writer.add_argument("--noise")
+        writer.add_argument("--plan", default="the transition plan")
+    oxlint_args, clippy_args = sub.choices["oxlint"], sub.choices["clippy"]
+    oxlint_args.add_argument("--rules", required=True)
+    oxlint_args.add_argument("--config", required=True)
+    oxlint_args.add_argument("--plugins", default="")
+    oxlint_args.add_argument("--categories", default="")
+    oxlint_args.add_argument("--target", default="")
+    oxlint_args.add_argument("--draft")
+    clippy_args.add_argument("--help-list", required=True)
+    clippy_args.add_argument("--groups", required=True)
+    clippy_args.add_argument("--target", default="")
+    sub.choices["golangci"].add_argument("--by-id")
+    sub.choices["mypy"].add_argument(
+        "--enabled", help="the codes of enable_error_code, comma-separated"
+    )
+    held = sub.add_parser("shrink")
+    held.add_argument("base")
+    held.add_argument("config")
+    held.add_argument("--plan")
+    return ap
 
 
 def main() -> int:
-    if len(sys.argv) >= 2 and sys.argv[1] == "shrink":
-        rest = sys.argv[2:]
-        plan = None
-        if "--plan" in rest:
-            i = rest.index("--plan")
-            plan, rest = (rest[i + 1] if i + 1 < len(rest) else None), rest[:i] + rest[i + 2:]
-        if len(rest) != 2 or (sys.argv[2:3] and sys.argv[2] in ("-h", "--help")):
-            print(__doc__)
-            return 0 if sys.argv[2:3] in (["-h"], ["--help"]) else 2
-        return shrink(argparse.Namespace(base=rest[0], config=rest[1], plan=plan))
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    sub = ap.add_subparsers(dest="tool", required=True)
-    o = sub.add_parser("oxlint")
-    o.add_argument("--rules", required=True)
-    o.add_argument("--config", required=True)
-    o.add_argument("--sites", nargs="+", required=True)
-    o.add_argument("--plugins", default="")
-    o.add_argument("--categories", default="")
-    o.add_argument("--target", default="")
-    o.add_argument("--noise")
-    o.add_argument("--plan")
-    g = sub.add_parser("golangci")
-    g.add_argument("--sites", nargs="+", required=True)
-    g.add_argument("--noise")
-    g.add_argument("--plan")
-    g.add_argument("--by-id")
-    for name in ("ruff", "mypy"):
-        s = sub.add_parser(name)
-        s.add_argument("--sites", nargs="+", required=True)
-        s.add_argument("--noise")
-        s.add_argument("--plan")
-        if name == "mypy":
-            s.add_argument("--enabled", help="the codes of enable_error_code, comma-separated")
-    c = sub.add_parser("clippy")
-    c.add_argument("--help-list", required=True)
-    c.add_argument("--sites", nargs="+", required=True)
-    c.add_argument("--groups", required=True)
-    c.add_argument("--target", default="")
-    c.add_argument("--noise")
-    c.add_argument("--plan")
-    args = ap.parse_args()
-    return {"oxlint": oxlint, "clippy": clippy, "golangci": golangci, "ruff": ruff, "mypy": mypy}[args.tool](args)
+    args = parser().parse_args()
+    return WRITERS[args.tool](args)
 
 
 if __name__ == "__main__":

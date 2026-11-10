@@ -12,7 +12,7 @@ One canonical doc: `AGENTS.md` when the repo has it, or the agent doc it already
 - **The fast loop**: the per-edit hook and that its output is read, or, with no hook, the command that runs the fast linters on the changed files.
 - **What to do when a rule fails**, by class: the recipes, in the words of this repo (its owning modules, its boundaries).
 - **The exception form** of each stack, and that its reason names why the rule is wrong here.
-- **What stays unchanged unless the task asks**: linter configs, baselines, ratchet constants. A count only goes down.
+- **What stays unchanged unless the task asks**: linter configs, baselines, ratchet constants, the gate's own scripts. A count only goes down.
 - **The behaviors of the decisions** the developer took (the module that owns spawns, where output is printed).
 - **A pointer to each guide the run installed** (`ast-grep-guide.md`): one line whose words name the cases that reach it, so the agent opens the guide at the moment it needs it. A guide for work beyond the gate (reading, searching, rewriting code) gets its pointer outside the lint gate block, in the doc's section for tools (§ The tools section): under a lint heading, an agent that is reading code, not linting it, passes it by.
 
@@ -41,8 +41,8 @@ Written in the language of the repo's docs; the `<...>` filled from this repo, t
   - a function that is too complex is a god function, and a file that is too long a god file: split each by the responsibilities it already carries, one function or module per responsibility, or rewrite the function with guard clauses or a table of cases;
   - a duplicated block that is one rule becomes one function named for the rule; two rules that only look alike stay two, with the ignore marker and its reason.
 - An exception is the last resort: `<exception form>`, with a reason that says why the rule is wrong at that line.
-- Linter configs, baselines and ratchet constants change only when the task is about them, and a count only goes down.
-- <With a debt list:> the lines you add meet every rule, the rules still on the debt list too: the gate fails on a debt rule's site on a new line.
+- Linter configs, baselines, ratchet constants and the gate's own scripts (`<the copy of scripts/>`) change only when the task is about them, and a count only goes down.
+- <With a debt list:> the lines you add meet every rule, the rules still on the debt list too: the gate fails on a debt rule's site on a new line. A line you only move or reformat stays as it was.
 ```
 
 ## The tools section

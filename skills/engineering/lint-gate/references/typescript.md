@@ -48,7 +48,7 @@ Rules with no type information: the `correctness`, `suspicious` and `pedantic` c
 
 | Group | Rules |
 |---|---|
-| Logic | `eqeqeq` (`null: ignore` when `== null` is the house idiom), `no-shadow`, `no-param-reassign`, `prefer-const`, `no-var`, `no-implicit-coercion`, `curly` (`all`), `default-case-last`, `radix` |
+| Logic | `eqeqeq` (`["error", "always", {"null": "ignore"}]` when `== null` is the house idiom; oxlint refuses the object without `"always"` before it), `no-shadow`, `no-param-reassign`, `prefer-const`, `no-var`, `no-implicit-coercion`, `curly` (`all`), `default-case-last`, `radix` |
 | Control flow | `no-nested-ternary`, `no-else-return` with `allowElseIf: false` (guard clauses) |
 | Size | `complexity` (max 10, `variant: "modified"`, so an exhaustive `switch` counts once), `max-depth` (max 3), `max-params` (max 4) |
 | Imports | `import/no-cycle`, `import/no-duplicates`, `import/no-self-import`, `import/first`, `import/extensions`, `import/no-default-export` (one name in every file, so grep finds it) |
@@ -112,7 +112,7 @@ The upstream commit goes in the plan's Measured section; the research of `refere
 
 - **tsconfig**: one flag at a time. Tally a run with the current flags, then a run with the current flags plus one target flag; `tally.py diff` gives that flag's sites. Flags go on the command line: `tsc --noEmit --pretty false -p tsconfig.json --noUncheckedIndexedAccess`.
 - **oxlint**: a draft config file, `oxlint -c <scratch>/oxlintrc.json --ignore-pattern '<each ignorePatterns entry>' --format json <paths>`. A `-D <rule>` on the command line drops the rule's options from the config (measured: `eqeqeq` loses `null: ignore`), so options go in the draft file. A draft outside the repo resolves `ignorePatterns` from its own folder, so the repo's ignores no longer match: pass each one as `--ignore-pattern` (measured: a vendored folder added 163,000 sites to 13,000 real ones).
-- **`debt.py oxlint`** prints a rule with sites as `"off"`: a target rule with options (`no-restricted-properties`, `max-params`) loses them there, so the plan carries the options for the phase that turns it on.
+- **`debt.py oxlint --draft <draft>`** prints a target rule with options (`no-restricted-properties`, `max-params`) as the draft sets it when it has no site; with sites it prints `"off"`, and its `debt:` comment says the draft holds the options, for the phase that turns it on. A rule or a category the repo holds at `warn` comes on like the rest: stderr names each `warn` line the block's line replaces.
 - **A new plugin** brings its rules of every category already on, `correctness` included. `debt.py oxlint` counts them; a hand list of the new categories misses them.
 - **Type-aware oxlint**: `npx -y -p oxlint@<v> -p oxlint-tsgolint@<v> oxlint --type-aware ...`. With the tools installed in a scratch folder, oxlint looks for `tsgolint` in the repo, not beside itself: set `OXLINT_TSGOLINT_PATH` to the scratch binary. tsgolint ignores `ignorePatterns` and can run out of memory on a vendored bundle: pass the source paths explicitly, the ones tsconfig checks.
 - **ESLint**: `eslint -c <scratch>/eslint.config.js -f json <paths>`. ESLint fails on an unknown rule name by itself, and its JSON lists `usedDeprecatedRules` with their replacements: that list is its drift check.
