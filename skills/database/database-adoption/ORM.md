@@ -13,7 +13,7 @@ In **mirror mode** the adoption carves the first mirror:
 
 ## The hand-written layer — step 4
 
-What the ORM's schema cannot express (routines, triggers, row-level security policies, grants, storage settings) lives only in hand-written migrations, so the live catalog is its only complete record. Hold the extractor to the **behavior-bearing attributes** [`PORTING.md`](PORTING.md) step 2 lists: an attribute the repo copy does not read is an extraction hole. Fix it in the repo copy and report it as a harvest candidate, or put it to the user as `BLOCKED`.
+What the ORM's schema cannot express (routines, triggers, row-level security policies, grants, storage settings) lives only in hand-written migrations, so the live catalog is its only complete record. Hold the extractor to the **behavior-bearing attributes** [`PORTING.md`](PORTING.md) step 2 lists: an attribute the repo copy does not read is an extraction hole. Fix it in the repo copy, or put it to the user as `BLOCKED`.
 
 ## The mapping — a third fact source, steps 5 and 6
 

@@ -2,7 +2,7 @@
 
 The disclosed branch of step 4 in [`SKILL.md`](SKILL.md), reached when no reference in `scripts/` covers the source engine. The skill ships one extractor on purpose; every other engine is a port this adoption builds. The **PORTING CONTRACT** in the reference's docstring is the source of truth for *what* a port honours — CLI, outputs, finding classes, fingerprint semantics, safety rules — and what it rewrites (connection, catalog reads, DDL rendering, census queries). This file is *how* to build one.
 
-A port is a subproject of its own, built by **reconcile-driven porting**, the way test-driven code is built: the live database is the test, and `reconcile` is red or green. Write a slice, run it, read what the engine answers, fix, run again. A port that has only been written is a draft; a port that has reconciled the live database is a tool. Build it as `db-schema/tools/extract_<source-dialect>.py`, starting its changelog at `1.0.0`. The skill's `scripts/` is the germline and stays read-only throughout; the port is the soma, and it grows in the repo.
+A port is a subproject of its own, built by **reconcile-driven porting**, the way test-driven code is built: the live database is the test, and `reconcile` is red or green. Write a slice, run it, read what the engine answers, fix, run again. A port that has only been written is a draft; a port that has reconciled the live database is a tool. Build it as `db-schema/tools/extract_<source-dialect>.py`, starting its changelog at `1.0.0`. The skill's `scripts/` stays read-only throughout; the port is the repo's own tool, and it grows in the repo.
 
 ## The sequence
 
@@ -27,4 +27,4 @@ Each step is done only when its check holds against the user's real database, un
 
 ## Closing the port
 
-Record in the ledger what the port covers and what it reports `BLOCKED`, and report the port as a **harvest candidate** in the hand-off: version, changelog, the engine and version it was proven against. A maintainer decides, outside the run, whether it joins the skill's references: the soma's mutation, selected into the germline.
+Record in the ledger what the port covers and what it reports `BLOCKED`. The port's changelog names the engine and version it was proven against.

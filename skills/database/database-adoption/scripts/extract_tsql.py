@@ -142,9 +142,7 @@ every behavior change. A reference copy of this file ships with the
 database-adoption skill (`.claude/skills/database-adoption/scripts/`). That
 reference is READ-ONLY while an adoption runs: the run evolves only the repo
 copy. At the start of an adoption the skill compares versions name-to-name:
-  repo copy newer  -> keep using the repo copy; report the divergence so a
-                      maintainer harvests it into the reference OUTSIDE any
-                      adoption run (the skill learns across projects);
+  repo copy newer  -> keep using the repo copy: it is the repo's own tool;
   skill newer      -> upgrade the repo copy;
   equal            -> nothing to do.
 The changelog is what makes that merge informed — a version number says THAT

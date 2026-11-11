@@ -31,7 +31,8 @@ python db-schema/tools/extract_<dialect>.py …  # adoption: probe | inventory |
 - Don't put business rules in a tool; behavior is proven in `db-schema/tests/`.
 - Dependencies are pinned in `_deps.py` (hardcoded, self-contained) and checked by
   `verify.py` — the module ships no repo-root requirements file. `verify` prints the
-  exact `pip install` command when a package is missing or mismatched.
+  exact `pip install` command when a package is missing or mismatched, and warns
+  (without failing) when `VALIDATED_ON` in `_deps.py` is older than `STALE_AFTER_DAYS`.
 
 ## Not yet built
 

@@ -12,8 +12,9 @@ Bring the repo back in line with the adopted live database. One direction only: 
 
 ## 1. Tool version check
 
-Sync tool versions per `database-adoption` step 4: compare `__version__` of the repo copy against the reference in that skill's `scripts/`. The references are the germline and stay read-only; the repo copy is the soma, the only one the run upgrades or bumps, and a repo copy ahead of the reference is reported as a harvest candidate in step 6. Done when the repo copy is at least the reference's version.
+Sync tool versions per `database-adoption` step 4: compare `__version__` of the repo copy against the reference in that skill's `scripts/`. The references stay read-only; the repo copy is the repo's own tool, the only one the run upgrades, fixes, or bumps, and a repo copy ahead of the reference keeps running as it is. Done when the repo copy is at least the reference's version.
 
+Then compare the repo's `db-schema/tools/_deps.py` with the one in the `database-setup` skill's `scaffold/`: a reference with a later `VALIDATED_ON` brings pins that were re-validated. Put the move to the user (old → new pin for each package) and apply it on their word: copy `REQUIRES` and `VALIDATED_ON`, install, then run `verify.py`. If the new pins turn `verify.py` red (a renamed rule, a dialect parse change), report the failures and keep the old pins.
 ## 2. Probe
 
 Run `extract_<dialect>.py probe` under the adoption's read-only rule: the account's permissions may have changed since the adoption. On a write-capable account it pauses; put the headline permissions to the user — an acceptance already recorded in the ledger for this login is re-applied with its recorded reason (`--accept-write-risk`), a new one only with the user's word. Either way, a write-capable account is named in the report. Done when the probe passed or the acceptance is applied.
@@ -46,4 +47,4 @@ When no finding is pending: re-run `extract_<dialect>.py --schema <schema> inven
 
 ## 6. Report
 
-End with: objects imported / updated / retired (paths), model docs touched, gaps opened (unconfirmed purposes, orphaned rules), findings pending a human decision — protected-rule changes awaiting their approver first, each with its impact — whether the baseline moved, the UNDEPLOYED list, and any harvest candidate from step 1, and a write-capable account from step 2. Name anything skipped: a silent skip is how drift becomes divergence.
+End with: objects imported / updated / retired (paths), model docs touched, gaps opened (unconfirmed purposes, orphaned rules), findings pending a human decision — protected-rule changes awaiting their approver first, each with its impact — whether the baseline moved, the UNDEPLOYED list, and a write-capable account from step 2. Name anything skipped: a silent skip is how drift becomes divergence.

@@ -4,12 +4,12 @@ description: Install the db-schema governance method (kit, model-docs home, agen
 disable-model-invocation: true
 ---
 
-Install the schema method this skill travels with: desired state declared in plain SQL, domain documented as source, validation mechanical. The `scaffold/` folder beside this file is the versioned reference of the whole method — copy it, wire it, prove it green. **Germline and soma:** the scaffold is the germline, read-only during a run; the copy in the target repo is the soma, which the repo grows from there. `scaffold/` changes only in maintenance outside any run, from what a repo's copy proved. What the scaffold deliberately leaves out matters as much as what it holds.
+Install the schema method this skill travels with: desired state declared in plain SQL, domain documented as source, validation mechanical. The `scaffold/` folder beside this file is the versioned reference of the whole method — copy it, wire it, prove it green. The scaffold is read-only during a run; the copy in the target repo is the repo's own, and the repo grows it from there. What the scaffold deliberately leaves out matters as much as what it holds.
 
 ## 1. Preflight
 
 - The target must be a git repository; when it is not, offer `git init` and wait for the user's answer.
-- **An existing `db-schema/`** means this is not an install. Tell the user it exists and ask for authorization before going further; this skill installs only. With authorization, compare the repo's copy against `scaffold/` file by file and report each difference: an improvement the repo made becomes a **harvest candidate** for the maintainer (file, what changed, why it looks like an improvement), and a file the scaffold has moved past is reported with the change it would bring. Done when the user has the report; the repo and `scaffold/` stay as they were unless the user directs a change to the repo.
+- **An existing `db-schema/`** means this is not an install. Tell the user it exists and ask for authorization before going further; this skill installs only. With authorization, compare the repo's copy against `scaffold/` file by file and report each file the scaffold has moved past, with the change it would bring. A file the repo changed on its own is the repo's adaptation and stays as it is. Done when the user has the report; the repo and `scaffold/` stay as they were unless the user directs a change to the repo.
 - **The agent instructions file.** Identify the file the project already uses for agent instructions (`AGENTS.md`, `CLAUDE.md`, or another the project's tooling reads) and name it to the user — that is where step 4 writes. When the project has none, propose creating `AGENTS.md` and create it only with the user's authorization.
 - **The DDL's owner.** Look for an ORM that writes the schema: its schema or entity definitions and a migrations folder it generates or applies (Drizzle, Prisma, Django, Alembic, EF Core, Hibernate, Rails, …). Found one → the mode is the user's decision, put with its trade-off: **mirror mode** keeps the ORM as the DDL's owner and carves `db-schema/` from a database its migrations built (recommend it when those migrations already deploy); **source mode** moves ownership to `db-schema/`, and the ORM's mapping follows the declared schema. Found none → source mode, with nothing to ask. Done when the mode is settled — and, in mirror mode, the ORM, its schema path, and its migrations path are named.
 - Python 3.11+ available. Tool dependencies have a single pinned source — `db-schema/tools/_deps.py` (no requirements file, by design); the CI workflow shows the one-liner that installs them.
@@ -87,3 +87,12 @@ Setup gives structure; it decides nothing. Offer the next step:
 - **Greenfield** (schema to be designed) → the `database-modeling` grill; its first theme settles the canonical dialect, which creates `db-schema/.sqlfluff`.
 - **Brownfield** (existing database to govern) → the `database-adoption` skill; its probe records the source dialect and puts the canonical-dialect decision to the user.
 - **Mirror mode** → the `database-adoption` skill, against a private database the ORM's migrations built: it carves the first mirror. The canonical dialect is the engine the migrations target.
+
+## Maintenance: dependency pins
+
+Outside any run. The pins in `scaffold/db-schema/tools/_deps.py` freeze while SQLFluff and sqlglot keep releasing, and every install copies them as they are; `check_deps` warns once `VALIDATED_ON` is older than `STALE_AFTER_DAYS`. To refresh:
+
+1. `python scripts/check_pins.py` — pinned vs latest on PyPI, with changelog links. Exit 0 means current; stop.
+2. For each pin behind, read the changelog from the pinned version to the candidate: renamed or removed rules, dialect parser changes, `.sqlfluff` keys that moved, sqlglot transpile changes.
+3. In a scratch repo with the scaffold installed and a `.sqlfluff` per dialect the references cover, install the candidates and run `verify.py` green, along with the extractor references' fixtures where they exist. A candidate that fails stays out; pin the newest one that passes.
+4. Update `REQUIRES` and `VALIDATED_ON` together in the scaffold. Repos already installed pick up the move through the `_deps.py` check in `database-sync` step 1.
