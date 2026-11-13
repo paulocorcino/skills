@@ -18,7 +18,7 @@ Install the schema method this skill travels with: desired state declared in pla
 
 Copy every tracked file of `scaffold/` into the repo root **verbatim**, byte for byte — derived files such as `__pycache__/` stay behind. A file the repo already has at a target path (an ADR index, a workflow) stays as it is: report it to the user with what the scaffold's version would add, and merge that part only on their word. The files:
 
-- `db-schema/` — folder skeleton with its per-folder READMEs (each one is the instruction set for work done in that folder) and `tools/` (`verify.py`, `lint.py`, `erdgen.py`, `buildsql.py`, `doccheck.py`, `_dialect.py`, `_deps.py`, `_paths.py`)
+- `db-schema/` — folder skeleton with its per-folder READMEs (each one is the instruction set for work done in that folder) and `tools/` (`verify.py`, `lint.py`, `erdgen.py`, `buildsql.py`, `doccheck.py`, `_dialect.py`, `_deps.py`, `_paths.py`, `_model.py`)
 - `docs/db-model/README.md` — the domain documentation lives **outside** the kit, in the repo's own docs tree: the DDL is code, the model is prose, and prose belongs where the rest of the project's prose lives. Only its `README.md` (skeleton and growth contract) ships; the model itself is grown from decisions or evidence
 - `docs/agents/database-schema.md` — the entry point: task → folder routing, N1/N2/N3 mental model
 - `docs/agents/database-doctrine.md` — the why: principles, dialect tiers, assumed risks

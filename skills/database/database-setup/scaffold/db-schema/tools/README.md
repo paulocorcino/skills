@@ -9,9 +9,9 @@ message. Run them from the **repo root**.
 |---|---|---|
 | `verify.py` | orchestrates the pipeline (lint + erd-check + buildsql + doccheck) | any step fails |
 | `lint.py` | SQLFluff; dialect per folder; slices `DELIMITER`/`GO` | strict error in `tables/` |
-| `erdgen.py` | generates `docs/db-model/erd.mmd` + `docs/db-model/schema.dbml` from `tables/` | `--check`: committed diagram diverges |
+| `erdgen.py` | generates `docs/db-model/erd.mmd` + `docs/db-model/schema.dbml` from `tables/`, enriched from versioned sources only — model blocks, baseline, `calc/`, overrides (list in its docstring) | `--check`: committed diagram diverges |
 | `buildsql.py` | assembles `generated/<dialect>/schema.sql` in FK dependency order; overrides replace, never magic translation | lossy transpile without an override (P4) |
-| `doccheck.py` | presence coherence between `schema/` and `model/` docs | table/native object missing from model docs |
+| `doccheck.py` | presence coherence between `schema/` and `model/` docs | table/native object missing from model docs; `**Implied:**` line malformed or naming an unknown table/column |
 | `extract_<dialect>.py` | **living** adoption tool — engine-specific by nature, one per adopted source engine (versioned references ship with the `database-adoption` skill, which ports one when no reference covers the engine; porting contract in the docstring): `probe`/`inventory`/`carve`/`reconcile`/`census`/`discover`, read-only; writes the versioned drift baseline to `db-schema/baseline/` | probe: write-capable account; reconcile: source drift or missing carved file |
 
 ```

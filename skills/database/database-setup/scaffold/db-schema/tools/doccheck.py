@@ -10,7 +10,8 @@ Presence checks only (semantic quality stays a human-review concern):
   2. every routine file under schema/native/<dialect>/ is mentioned in the
      model docs (Routines section or elsewhere);
   3. committed diagrams in sync — delegated to erdgen.py --check;
-  4. every migration in migrations/ starts with a description comment.
+  4. every migration in migrations/ starts with a description comment;
+  5. every `**Implied:**` line parses and names tables and columns the DDL has.
 
 Exit 0 = coherent. Any failure = exit 1.
 """
@@ -20,6 +21,7 @@ import re
 import subprocess
 import sys
 
+from _model import model_text, table_blocks
 from _paths import KIT_ROOT, MODEL_DIR, display
 
 ROOT = KIT_ROOT
@@ -28,16 +30,30 @@ NATIVE_DIR = ROOT / "schema" / "native"
 MIGRATIONS_DIR = ROOT / "migrations"
 
 
-def model_text() -> str:
-    chunks = []
-    main = MODEL_DIR / "database.md"
-    if main.exists():
-        chunks.append(main.read_text(encoding="utf-8"))
-    domains = MODEL_DIR / "domains"
-    if domains.is_dir():
-        for f in sorted(domains.glob("*.md")):
-            chunks.append(f.read_text(encoding="utf-8"))
-    return "\n".join(chunks)
+def implied_problems() -> list[str]:
+    """Each `**Implied:**` line must parse and point at real tables and columns."""
+    from erdgen import parse_table  # deferred: needs the canonical dialect
+    tables = {}
+    for f in sorted(TABLES_DIR.glob("*.sql")):
+        t = parse_table(f.read_text(encoding="utf-8"))
+        if t is not None:
+            tables[t.name] = {c.name for c in t.columns}
+    problems = []
+    for name, block in sorted(table_blocks(set(tables)).items()):
+        for bad in block.bad_implied:
+            problems.append(f"{name}: malformed **Implied:** line (format in "
+                            f"docs/db-model/README.md): {bad}")
+        for imp in block.implied:
+            missing = [c for c in imp.columns if c not in tables[name]]
+            if imp.ref_table not in tables:
+                problems.append(f"{name}: **Implied:** names unknown table {imp.ref_table}")
+            else:
+                missing += [f"{imp.ref_table}.{c}" for c in imp.ref_columns
+                            if c not in tables[imp.ref_table]]
+            if missing:
+                problems.append(f"{name}: **Implied:** names unknown column(s) "
+                                f"{', '.join(missing)}")
+    return problems
 
 
 def mentioned(name: str, text: str) -> bool:
@@ -62,6 +78,8 @@ def main() -> int:
                 if not mentioned(f.stem, text):
                     problems.append(f"native object not in model docs: "
                                     f"{f.relative_to(NATIVE_DIR)}")
+        if any(TABLES_DIR.glob("*.sql")):
+            problems.extend(implied_problems())
 
     result = subprocess.run(
         [sys.executable, str(ROOT / "tools" / "erdgen.py"), "--check"],

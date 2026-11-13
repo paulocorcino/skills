@@ -17,12 +17,28 @@ In a monorepo with `packages/api/db-schema/` and docs at the workspace root, mak
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 KIT_ROOT = Path(__file__).resolve().parents[1]
 
 # The only configurable path in the tooling — see the module docstring.
 MODEL_DIR = KIT_ROOT.parent / "docs" / "db-model"
+
+
+# Links that erdgen.py writes into schema.dbml notes are relative to the model docs, which
+# works in an editor and in the repo browser. Viewers that render the DBML elsewhere
+# (dbdiagram, dbdocs) cannot resolve them: set this to the repo's file URL root, e.g.
+# "https://github.com/<org>/<repo>/blob/main/", and links become absolute.
+LINK_BASE: str | None = None
+
+
+def link_to(target: Path) -> str:
+    """Link from the model docs (where schema.dbml lives) to a file in the repo."""
+    repo_root = KIT_ROOT.parent
+    if LINK_BASE:
+        return LINK_BASE + str(target.resolve().relative_to(repo_root)).replace("\\", "/")
+    return os.path.relpath(target.resolve(), MODEL_DIR.resolve()).replace("\\", "/")
 
 
 def model_path(*parts: str) -> Path:

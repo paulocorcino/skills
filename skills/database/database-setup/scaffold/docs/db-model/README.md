@@ -61,7 +61,20 @@ The heading is the table's qualified name — the same string as its file name
 - **Concept:** <what a row represents in the business>.
 - **Invariants:** <what must always hold — each becomes a test in db-schema/tests/>.
 - **Relations:** <cardinality and FK action with neighbors>.
+- **Implied:** <col>[, <col>] → <table>.<col>[, <col>] — <note>
 ```
+
+`**Implied:**` records a relation confirmed by a human (the grill) that has **no foreign
+key behind it** — one line per relation, in exactly this format; a candidate edge from
+`discover` or the code stays a gap until confirmed. `doccheck` fails a line that does not
+parse or names a table or column the DDL lacks.
+
+`erdgen.py` reads this file mechanically into `schema.dbml`: the `**Concept:**` line
+becomes the table's note with links (model block, DDL, routines, protected-rule memo,
+override), each `**Implied:**` line a relation drawn in its own color (dotted in
+`erd.mmd`), each `###` group a `TableGroup`, and an **elimination candidate** mark a
+flag on the table. Editing these lines changes the diagrams: re-run `erdgen.py`, or CI
+reports them out of date.
 
 ### Materiality (adopted schemas)
 
